@@ -108,6 +108,15 @@ class LoaderTests(unittest.TestCase):
                 with self.assertRaises(RunFailure):
                     reader(path)
 
+    def test_reports_first_invalid_plugin_entry(self) -> None:
+        path = self.write(
+            "mixed-invalid-bundle.toml",
+            'plugins = [{ id = "", module = "mod" }, "not-a-table"]',
+        )
+
+        with self.assertRaisesRegex(RunFailure, "empty Plugin id"):
+            read_bundle(path)
+
     def test_rejects_missing_files_duplicate_ids_and_invalid_apply(self) -> None:
         with self.assertRaises(RunFailure):
             read_profile(self.root / "missing.toml")

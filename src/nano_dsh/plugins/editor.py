@@ -10,8 +10,13 @@ from nano_dsh.contracts import RunFailure, ToolDefinition, ToolFailure
 OUTPUT_LIMIT = 16_000
 COMMANDS = ("view", "create", "str_replace", "insert")
 FIELDS = {
-    "command", "path", "file_text", "insert_line",
-    "new_str", "old_str", "view_range",
+    "command",
+    "path",
+    "file_text",
+    "insert_line",
+    "new_str",
+    "old_str",
+    "view_range",
 }
 
 
@@ -158,7 +163,10 @@ def _insert(target: Path, arguments: dict[str, object]) -> str:
 
 
 _HANDLERS = {
-    "view": _view, "create": _create, "str_replace": _replace, "insert": _insert
+    "view": _view,
+    "create": _create,
+    "str_replace": _replace,
+    "insert": _insert,
 }
 
 

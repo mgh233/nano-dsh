@@ -112,4 +112,7 @@ def _load_apply(spec: PluginSpec) -> RawApply:
 def _bind_config(
     raw_apply: RawApply, config: Mapping[str, object]
 ) -> Callable[[object], object]:
-    return lambda context: raw_apply(context, config)
+    def fiber_apply(context: object) -> object:
+        return raw_apply(context, config)
+
+    return fiber_apply
