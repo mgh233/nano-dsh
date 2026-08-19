@@ -1,4 +1,4 @@
-"""Headless Agent Run Driver Plugin."""
+# Headless Agent Run Driver Plugin.
 
 from collections.abc import Mapping
 from typing import Any

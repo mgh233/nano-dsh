@@ -1,6 +1,4 @@
-"""Load ordered Plugin Specifications from TOML Profiles and Bundles."""
-
-from __future__ import annotations
+# Load ordered Plugin Specifications from TOML Profiles and Bundles.
 
 import importlib
 import tomllib
@@ -12,22 +10,23 @@ from typing import Any, cast
 from .contracts import PluginSpec, RunFailure
 
 
+RawApply = Callable[[object, Mapping[str, object]], object]
+
+
 @dataclass(frozen=True)
 class Profile:
-    """An ordered set of Bundle paths selected by one TOML file."""
-
+    # An ordered set of Bundle paths selected by one TOML file.
     bundles: tuple[Path, ...]
 
 
 @dataclass(frozen=True)
 class Bundle:
-    """An ordered set of declarative Plugin Specifications."""
-
+    # An ordered set of declarative Plugin Specifications.
     plugins: tuple[PluginSpec, ...]
 
 
 def read_profile(path: Path) -> Profile:
-    """Read a Profile and resolve Bundle paths from its directory."""
+    # Read a Profile and resolve Bundle paths from its directory.
     data = _read_toml(path, "Profile")
     bundles = data.get("bundles")
     if not isinstance(bundles, list):
@@ -41,7 +40,7 @@ def read_profile(path: Path) -> Profile:
 
 
 def read_bundle(path: Path) -> Bundle:
-    """Read one Bundle and validate each Plugin Specification."""
+    # Read one Bundle and validate each Plugin Specification.
     data = _read_toml(path, "Bundle")
     entries = data.get("plugins")
     if not isinstance(entries, list):
@@ -55,13 +54,13 @@ def read_bundle(path: Path) -> Bundle:
 
 
 class Loader:
-    """Turn Profile entries into dynamically imported Plugin Fibers."""
+    # Turn Profile entries into dynamically imported Plugin Fibers.
 
     def __init__(self, context: object) -> None:
         self._context = context
 
     def load(self, profile_path: Path) -> tuple[PluginSpec, ...]:
-        """Register Plugins in Profile then Bundle entry order."""
+        # Register Plugins in Profile then Bundle entry order.
         seen: set[str] = set()
         loaded: list[PluginSpec] = []
         for bundle_path in read_profile(profile_path).bundles:
@@ -69,8 +68,7 @@ class Loader:
                 if spec.id in seen:
                     raise RunFailure(f"Duplicate Plugin id: {spec.id}")
                 seen.add(spec.id)
-                raw_apply = _load_apply(spec)
-                fiber_apply = _bind_config(raw_apply, spec.config)
+                fiber_apply = _bind_config(_load_apply(spec), spec.config)
                 self._context.add_fiber(spec, fiber_apply)  # type: ignore[attr-defined]
                 loaded.append(spec)
         return tuple(loaded)
@@ -84,8 +82,6 @@ def _read_toml(path: Path, kind: str) -> dict[str, Any]:
         raise RunFailure(f"{kind} file does not exist: {path}") from error
     except tomllib.TOMLDecodeError as error:
         raise RunFailure(f"Malformed {kind} TOML: {path}") from error
-    if not isinstance(data, dict):
-        raise RunFailure(f"Malformed {kind} root: {path}")
     return data
 
 
@@ -105,9 +101,7 @@ def _plugin_spec(path: Path, entry: dict[str, Any]) -> PluginSpec:
     return PluginSpec(plugin_id, module, tuple(inject), config)
 
 
-def _load_apply(
-    spec: PluginSpec,
-) -> Callable[[object, Mapping[str, object]], object]:
+def _load_apply(spec: PluginSpec) -> RawApply:
     try:
         module = importlib.import_module(spec.module)
     except ImportError as error:
@@ -115,12 +109,11 @@ def _load_apply(
     apply = getattr(module, "apply", None)
     if not callable(apply):
         raise RunFailure(f"Plugin {spec.id} has no callable apply(ctx, config)")
-    return cast(Callable[[object, Mapping[str, object]], object], apply)
+    return cast(RawApply, apply)
 
 
 def _bind_config(
-    raw_apply: Callable[[object, Mapping[str, object]], object],
-    config: Mapping[str, object],
+    raw_apply: RawApply, config: Mapping[str, object]
 ) -> Callable[[object], object]:
     def fiber_apply(context: object) -> object:
         return raw_apply(context, config)

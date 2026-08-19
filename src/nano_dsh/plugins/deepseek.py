@@ -1,6 +1,4 @@
-"""Synchronous DeepSeek Chat Completions Provider Plugin."""
-
-from __future__ import annotations
+# Synchronous DeepSeek Chat Completions Provider Plugin.
 
 import json
 import urllib.request
@@ -21,6 +19,11 @@ def _send(request: urllib.request.Request) -> bytes:
         return response.read()
 
 
+def _require(condition: object, message: str) -> None:
+    if not condition:
+        raise c.RunFailure(f"DeepSeek {message}")
+
+
 class DeepSeekProvider:
     def __init__(
         self,
@@ -33,16 +36,11 @@ class DeepSeekProvider:
         transport: Transport | None = None,
         trace: c.Trace | None = None,
     ) -> None:
-        if not isinstance(api_key, str) or not api_key.strip():
-            raise c.RunFailure("DeepSeek API key must be non-empty")
-        if not isinstance(model, str) or not model.strip():
-            raise c.RunFailure("DeepSeek model must be a non-empty string")
-        if thinking not in ("enabled", "disabled"):
-            raise c.RunFailure("DeepSeek thinking must be enabled or disabled")
-        if reasoning_effort not in ("high", "max"):
-            raise c.RunFailure("DeepSeek reasoning_effort must be high or max")
-        if stream is not False:
-            raise c.RunFailure("DeepSeek stream must be false")
+        _require(isinstance(api_key, str) and api_key.strip(), "API key must be non-empty")
+        _require(isinstance(model, str) and model.strip(), "model must be a non-empty string")
+        _require(thinking in ("enabled", "disabled"), "thinking must be enabled or disabled")
+        _require(reasoning_effort in ("high", "max"), "reasoning_effort must be high or max")
+        _require(stream is False, "stream must be false")
         self._api_key = api_key
         self._model = model
         self._thinking = thinking
@@ -72,9 +70,7 @@ class DeepSeekProvider:
                    "Content-Type": "application/json"}
         self._emit("request")
         try:
-            request = urllib.request.Request(
-                _ENDPOINT, body, headers, method="POST"
-            )
+            request = urllib.request.Request(_ENDPOINT, body, headers, method="POST")
             raw = self._transport(request)
         except Exception:
             raise c.RunFailure("DeepSeek request failed") from None
@@ -171,12 +167,11 @@ def _parse_tool_call(value: object) -> c.ToolCall:
     call_id = value.get("id")
     name = function.get("name")
     arguments = function.get("arguments")
-    invalid = (
-        not isinstance(call_id, str), not call_id,
-        not isinstance(name, str), not name,
-        not isinstance(arguments, str),
-    )
-    if any(invalid):
+    if not (
+        isinstance(call_id, str) and call_id
+        and isinstance(name, str) and name
+        and isinstance(arguments, str)
+    ):
         raise c.RunFailure("DeepSeek response has an invalid Tool Call")
     return c.ToolCall(call_id, name, arguments)
 

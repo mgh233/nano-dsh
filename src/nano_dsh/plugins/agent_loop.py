@@ -1,15 +1,13 @@
-"""AgentLoop AgentFactory Plugin."""
-
-from __future__ import annotations
+# AgentLoop AgentFactory Plugin.
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from nano_dsh.contracts import (
     Agent,
     AssistantEvent,
-    Disposer,
     LLMProvider,
     RunFailure,
     ToolResultEvent,
@@ -22,47 +20,30 @@ from nano_dsh.plugins.tools import ToolsService
 
 
 class AgentLoopFactory:
-    """Create Agents backed by the active core Services."""
+    # Create Agents backed by the active core Services.
 
     def __init__(self, ctx: Any) -> None:
-        self._agents: AgentsService = ctx.get("agents")
         self._sessions: SessionsService = ctx.get("sessions")
         self._llm: LLMProvider = ctx.get("llm")
         self._tools: ToolsService = ctx.get("tools")
         self._trace: Trace = ctx.emit
 
-    def register(self) -> Disposer:
-        """Register this factory through the Agents Service."""
-        return self._agents.set_factory(self)
-
     def create(self, workspace: Path) -> Agent:
-        """Create one Agent with one new Session."""
-        return _Agent(
-            self._sessions.create(),
-            self._llm,
-            self._tools,
-            workspace,
-            self._trace,
-        )
+        # Create one Agent with one new Session.
+        session = self._sessions.create()
+        return _Agent(session, self._llm, self._tools, workspace, self._trace)
 
 
+@dataclass
 class _Agent:
-    def __init__(
-        self,
-        session: Session,
-        llm: LLMProvider,
-        tools: ToolsService,
-        workspace: Path,
-        trace: Trace,
-    ) -> None:
-        self._session = session
-        self._llm = llm
-        self._tools = tools
-        self._workspace = workspace
-        self._trace = trace
+    _session: Session
+    _llm: LLMProvider
+    _tools: ToolsService
+    _workspace: Path
+    _trace: Trace
 
     def run(self, task: str) -> str:
-        """Run Model Steps until the Provider returns final content."""
+        # Run Model Steps until the Provider returns final content.
         self._session.append(UserEvent(task))
         self._trace("agent", "run started")
         model_step = 0
@@ -93,14 +74,13 @@ class _Agent:
                     )
                 continue
             if output.content is None or not output.content.strip():
-                raise RunFailure(
-                    "final assistant response must contain non-empty content"
-                )
+                raise RunFailure("final assistant response must contain non-empty content")
             self._trace("agent", "run completed")
             return output.content
 
 
 def apply(ctx: Any, config: Mapping[str, object]) -> None:
-    """Register the AgentLoop factory as a Fiber-owned Effect."""
+    # Register the AgentLoop factory as a Fiber-owned Effect.
+    agents: AgentsService = ctx.get("agents")
     factory = AgentLoopFactory(ctx)
-    ctx.effect(factory.register)
+    ctx.effect(lambda: agents.set_factory(factory))
