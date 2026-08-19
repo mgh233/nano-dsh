@@ -1,6 +1,4 @@
-"""Workspace-confined text Editor Tool Plugin."""
-
-from __future__ import annotations
+# Workspace-confined text Editor Tool Plugin.
 
 from collections.abc import Mapping
 from pathlib import Path
@@ -79,7 +77,7 @@ def _range(value: object, line_count: int) -> tuple[int, int]:
     if (
         not isinstance(value, list)
         or len(value) != 2
-        or any(type(item) is not int for item in value)
+        or not all(type(item) is int for item in value)
     ):
         raise ToolFailure("view_range must contain two integers")
     start, end = value
@@ -98,7 +96,7 @@ def _view(target: Path, arguments: dict[str, object]) -> str:
         try:
             names = [
                 child.name + ("/" if child.is_dir() else "")
-                for child in sorted(target.iterdir(), key=lambda item: item.name)
+                for child in sorted(target.iterdir(), key=lambda child: child.name)
             ]
         except OSError as error:
             raise ToolFailure(f"cannot list directory: {error}") from error
@@ -109,14 +107,12 @@ def _view(target: Path, arguments: dict[str, object]) -> str:
         if "view_range" in arguments:
             raise ToolFailure("cannot select a range from an empty file")
         return ""
-    start, end = (1, len(lines))
+    start, end = 1, len(lines)
     if "view_range" in arguments:
         start, end = _range(arguments["view_range"], len(lines))
-    result = "\n".join(
-        f"{number}\t{lines[number - 1]}"
-        for number in range(start, end + 1)
-    )
-    return result[:OUTPUT_LIMIT]
+    return "\n".join(
+        f"{number}\t{lines[number - 1]}" for number in range(start, end + 1)
+    )[:OUTPUT_LIMIT]
 
 
 def _create(target: Path, arguments: dict[str, object]) -> str:
@@ -157,31 +153,31 @@ def _insert(target: Path, arguments: dict[str, object]) -> str:
     lines = text.splitlines(keepends=True)
     if line < 0 or line > len(lines):
         raise ToolFailure(f"insert_line must be between 0 and {len(lines)}")
-    before = "".join(lines[:line])
-    after = "".join(lines[line:])
-    if before and not before.endswith(("\n", "\r")):
-        before += "\n"
-    if after and not new.endswith(("\n", "\r")):
+    if line and not lines[line - 1].endswith(("\n", "\r")):
+        lines[line - 1] += "\n"
+    if line < len(lines) and not new.endswith(("\n", "\r")):
         new += "\n"
-    _write(target, before + new + after)
+    lines.insert(line, new)
+    _write(target, "".join(lines))
     return f"Inserted text after line {line} in {target}"[:OUTPUT_LIMIT]
+
+
+_HANDLERS = {
+    "view": _view,
+    "create": _create,
+    "str_replace": _replace,
+    "insert": _insert,
+}
 
 
 def _handle(value: object, workspace: Path) -> str:
     arguments = _arguments(value)
     target = _resolve(arguments["path"], workspace)
-    command = arguments["command"]
-    if command == "view":
-        return _view(target, arguments)
-    if command == "create":
-        return _create(target, arguments)
-    if command == "str_replace":
-        return _replace(target, arguments)
-    return _insert(target, arguments)
+    return _HANDLERS[arguments["command"]](target, arguments)
 
 
 def apply(ctx: Any, config: Mapping[str, object]) -> None:
-    """Register the Editor Tool for the current Fiber."""
+    # Register the Editor Tool for the current Fiber.
     if not isinstance(config, Mapping) or config:
         raise RunFailure("str_replace_editor Plugin config must be empty")
     tools = ctx.get("tools")

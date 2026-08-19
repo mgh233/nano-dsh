@@ -1,1 +1,1 @@
-"""Built-in nano-dsh Plugins."""
+# Built-in nano-dsh Plugins.

@@ -78,6 +78,15 @@ class LoaderTests(unittest.TestCase):
 
         self.assertEqual(result.bundles, ((self.root / "bundles/base.toml").resolve(),))
 
+    def test_profile_reports_first_bundle_resolution_error(self) -> None:
+        profile = self.write("profiles/main.toml", 'bundles = ["loop", 1]')
+        (profile.parent / "loop").symlink_to("loop")
+
+        with self.assertRaises(RuntimeError) as caught:
+            read_profile(profile)
+        self.assertIs(type(caught.exception), RuntimeError)
+        self.assertNotIsInstance(caught.exception, RunFailure)
+
     def test_consumer_before_provider_is_not_sorted(self) -> None:
         self.module("test_loader_consumer")
         self.module("test_loader_provider")
@@ -107,6 +116,15 @@ class LoaderTests(unittest.TestCase):
                 path = self.write(relative, content)
                 with self.assertRaises(RunFailure):
                     reader(path)
+
+    def test_reports_first_invalid_plugin_entry(self) -> None:
+        path = self.write(
+            "mixed-invalid-bundle.toml",
+            'plugins = [{ id = "", module = "mod" }, "not-a-table"]',
+        )
+
+        with self.assertRaisesRegex(RunFailure, "empty Plugin id"):
+            read_bundle(path)
 
     def test_rejects_missing_files_duplicate_ids_and_invalid_apply(self) -> None:
         with self.assertRaises(RunFailure):
