@@ -40,22 +40,23 @@ class ToolsService:
 
     def execute(self, call: ToolCall, workspace: Path) -> str:
         # Parse and execute one Tool Call.
-        self._trace("tool", f"execute {call.name}")
         definition = self._definitions.get(call.name)
+        label = definition.name if definition is not None else "<unknown>"
+        self._trace("tool", f"execute {label}")
         if definition is None:
-            self._trace("tool", f"failed {call.name}")
+            self._trace("tool", f"failed {label}")
             return f"Error: unknown Tool: {call.name}"
         try:
             arguments = json.loads(call.arguments)
         except json.JSONDecodeError as error:
-            self._trace("tool", f"failed {call.name}")
+            self._trace("tool", f"failed {label}")
             return f"Error: invalid JSON arguments: {error.msg}"
         try:
             result = definition.handler(arguments, workspace)
         except ToolFailure as error:
-            self._trace("tool", f"failed {call.name}")
+            self._trace("tool", f"failed {label}")
             return f"Error: {error}"
-        self._trace("tool", f"complete {call.name}")
+        self._trace("tool", f"complete {label}")
         return result
 
 

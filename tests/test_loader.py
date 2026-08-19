@@ -78,6 +78,13 @@ class LoaderTests(unittest.TestCase):
 
         self.assertEqual(result.bundles, ((self.root / "bundles/base.toml").resolve(),))
 
+    def test_profile_reports_first_bundle_resolution_error(self) -> None:
+        profile = self.write("profiles/main.toml", 'bundles = ["loop", 1]')
+        (profile.parent / "loop").symlink_to("loop")
+
+        with self.assertRaises(RuntimeError):
+            read_profile(profile)
+
     def test_consumer_before_provider_is_not_sorted(self) -> None:
         self.module("test_loader_consumer")
         self.module("test_loader_provider")

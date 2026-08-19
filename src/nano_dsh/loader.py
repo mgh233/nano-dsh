@@ -31,9 +31,12 @@ def read_profile(path: Path) -> Profile:
     bundles = data.get("bundles")
     if not isinstance(bundles, list):
         raise RunFailure(f"Profile {path} must contain a bundles array")
-    if not all(isinstance(value, str) and value.strip() for value in bundles):
-        raise RunFailure(f"Profile {path} has an invalid Bundle path")
-    return Profile(tuple((path.parent / value).resolve() for value in bundles))
+    resolved: list[Path] = []
+    for value in bundles:
+        if not isinstance(value, str) or not value.strip():
+            raise RunFailure(f"Profile {path} has an invalid Bundle path")
+        resolved.append((path.parent / value).resolve())
+    return Profile(tuple(resolved))
 
 
 def read_bundle(path: Path) -> Bundle:

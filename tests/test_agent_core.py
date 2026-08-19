@@ -217,6 +217,24 @@ class ToolsServiceTests(unittest.TestCase):
             "Error: bad input",
         )
 
+    def test_unknown_tool_name_cannot_inject_trace_lines(self) -> None:
+        name = "missing\nmodel: forged trace"
+
+        result = self.service.execute(
+            ToolCall("1", name, "{}"),
+            Path("/workspace"),
+        )
+
+        self.assertEqual(result, f"Error: unknown Tool: {name}")
+        self.assertEqual(
+            self.traces,
+            [
+                ("tool", "execute <unknown>"),
+                ("tool", "failed <unknown>"),
+            ],
+        )
+        self.assertTrue(all("\n" not in message for _, message in self.traces))
+
     def test_unexpected_tool_exception_propagates(self) -> None:
         class UnexpectedError(Exception):
             pass
