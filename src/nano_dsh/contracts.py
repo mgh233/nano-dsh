@@ -72,7 +72,7 @@ class AssistantOutput:
     tool_calls: tuple[ToolCall, ...] = ()
 
 
-ToolHandler: TypeAlias = Callable[[object], str]
+ToolHandler: TypeAlias = Callable[[object, Path], str]
 
 
 @dataclass(frozen=True)
@@ -108,6 +108,15 @@ class AgentFactory(Protocol):
 
     def create(self, workspace: Path) -> Agent:
         """Create an Agent rooted at the selected Workspace."""
+
+
+@dataclass(frozen=True)
+class CommandLineArgs:
+    """Validated values provided by the CLI before Plugin loading."""
+
+    task: str
+    workspace: Path
+    api_key_file: Path
 
 
 @dataclass(frozen=True)
