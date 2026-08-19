@@ -96,11 +96,18 @@ def _invoke_cli(arguments: Sequence[str]) -> tuple[str, str]:
 def _safe_trace(stderr: str) -> tuple[str, ...]:
     """Keep only known concise events from the captured Execution Trace."""
 
-    return tuple(
-        line
-        for line in stderr.splitlines()
-        if any(pattern.fullmatch(line) for pattern in TRACE_PATTERNS)
-    )
+    events = []
+    for line in stderr.splitlines():
+        if any(pattern.fullmatch(line) for pattern in TRACE_PATTERNS):
+            events.append(line)
+            continue
+        other_tool = re.fullmatch(
+            r"tool: (execute|complete|failed) .+",
+            line,
+        )
+        if other_tool is not None:
+            events.append(f"tool: {other_tool.group(1)} <other>")
+    return tuple(events)
 
 
 def _assert_run(stdout: str, trace: tuple[str, ...]) -> None:
@@ -127,24 +134,26 @@ def _assert_run(stdout: str, trace: tuple[str, ...]) -> None:
             "Model or Tool event is outside the Agent lifecycle"
         )
 
-    tool_completions = (
-        _successful_tool_completions(
-            trace,
-            "str_replace_editor",
-        )
-        + _successful_tool_completions(
-            trace,
-            "bash",
-        )
+    _successful_tool_completions(
+        trace,
+        "str_replace_editor",
     )
-    last_tool_completed = max(tool_completions)
+    _successful_tool_completions(
+        trace,
+        "bash",
+    )
+    last_tool_terminated = max(
+        index
+        for index, event in enumerate(trace)
+        if event.startswith(("tool: complete ", "tool: failed "))
+    )
     if not _has_later_model_step(
         trace,
-        last_tool_completed,
+        last_tool_terminated,
         agent_completed,
     ):
         raise AcceptanceFailure(
-            "no complete Model Step follows the last Tool completion"
+            "no complete Model Step follows the last Tool result"
         )
 
 
@@ -191,10 +200,10 @@ def _successful_tool_completions(
 
 def _has_later_model_step(
     trace: tuple[str, ...],
-    last_tool_completed: int,
+    last_tool_terminated: int,
     agent_completed: int,
 ) -> bool:
-    for index in range(last_tool_completed + 1, agent_completed - 3):
+    for index in range(last_tool_terminated + 1, agent_completed - 3):
         match = re.fullmatch(
             r"model: step ([1-9][0-9]*) started",
             trace[index],

@@ -271,6 +271,15 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
                     "agent: run completed\ntool: execute bash\n",
                 ),
             ),
+            "trailing failed Tool without a later step": (
+                "done\n",
+                GOOD_TRACE.replace(
+                    "agent: run completed\n",
+                    "tool: execute lookup\n"
+                    "tool: failed lookup\n"
+                    "agent: run completed\n",
+                ),
+            ),
         }
         for name, response in cases.items():
             with self.subTest(name=name):
@@ -282,6 +291,30 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
                 )
                 self.assertFalse(result.passed)
                 self.assertTrue(result.workspace.exists())
+
+    def test_trailing_failed_tool_with_a_later_step_is_accepted(self) -> None:
+        trace = GOOD_TRACE.replace(
+            "agent: run completed\n",
+            "tool: execute lookup\n"
+            "tool: failed lookup\n"
+            "model: step 3 started\n"
+            "model: request\n"
+            "model: response\n"
+            "model: step 3 completed\n"
+            "agent: run completed\n",
+        )
+        result = live_acceptance._run_fixture(
+            self.fixture,
+            self.key_file,
+            invoke_cli=lambda _: ("done\n", trace),
+            run_tests=lambda _: True,
+        )
+
+        self.assertTrue(result.passed)
+        self.assertFalse(result.workspace.exists())
+        self.assertIn("tool: execute <other>", result.trace)
+        self.assertIn("tool: failed <other>", result.trace)
+        self.assertNotIn("lookup", repr(result.trace))
 
     def test_duplicate_lifecycle_events_are_rejected(self) -> None:
         lifecycle_events = (
