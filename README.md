@@ -151,15 +151,26 @@ This suite verifies the Fiber lifecycle, dynamic loading, reverse Effect cleanup
 
 ### Three-fixture Live Acceptance Suite
 
-The planned Live Acceptance Suite uses three disposable Bug Fixtures: one logic error, one boundary error, and one missing implementation. Each run must use the real DeepSeek API, call both `str_replace_editor` and `bash`, return Tool Results to a later Model Step, pass the fixture's `unittest` suite, and finish with final assistant text.
+The included Live Acceptance Suite uses three disposable Bug Fixtures: one logic error, one boundary error, and one missing implementation. For acceptance, each run must use the real DeepSeek API, call both `str_replace_editor` and `bash`, return Tool Results to a later Model Step, pass the fixture's `unittest` suite, and finish with final assistant text.
 
-Its acceptance command is:
+Run it with:
 
 ```bash
 python scripts/live_acceptance.py --api-key-file .key
 ```
 
-This checkout does not yet contain `fixtures/` or `scripts/live_acceptance.py`. The command is the acceptance method specified in [PLAN.md](PLAN.md), not a completed or locally runnable result. Do not report a live run as passed until those files exist and the command exits successfully. The script must not retry automatically.
+A successful run prints:
+
+```text
+logic-bug: PASS
+boundary-bug: PASS
+missing-implementation: PASS
+Summary: 3/3 PASS
+```
+
+The script performs one attempt per fixture. It does not retry automatically.
+
+Verification record (2026-08-20): on `main`, the offline suite passed 94/94 tests; production Python contained 995 non-empty, non-comment lines, and its largest file contained 179; one live command execution completed without automatic retries and passed logic, boundary, and missing-implementation fixtures, for 3/3 total. This dated record does not guarantee the result of later revisions or API runs.
 
 ## 6. Security boundary and failure behavior
 
@@ -167,7 +178,7 @@ This checkout does not yet contain `fixtures/` or `scripts/live_acceptance.py`. 
 - Every Bash Tool Execution starts a fresh `/bin/bash` process. Shell state does not persist. It has a 300-second timeout and a 16,000-character model-visible output limit.
 - `str_replace_editor` accepts only absolute paths. It resolves paths and rejects targets outside the Workspace, including symbolic-link escapes. This path confinement does not sandbox Bash.
 - `.key` is ignored by Git. The Provider reads one non-empty line into memory. The Bash child environment removes `DEEPSEEK_API_KEY`.
-- There is no automatic retry for provider requests or the planned live suite. There is no Model Step cap. A provider, configuration, Plugin, or runtime-invariant failure ends the Agent Run visibly.
+- There is no automatic retry for provider requests or the live suite. There is no Model Step cap. A provider, configuration, Plugin, or runtime-invariant failure ends the Agent Run visibly.
 - Expected Tool failures are different. Invalid Tool arguments, a nonzero Bash exit, or a non-unique editor replacement become Tool Results that the Agent can inspect in a later Model Step.
 
 Use a disposable Workspace for live runs. Do not put secrets or important host files where a trusted Bash process can reach them.
