@@ -203,6 +203,16 @@ class EditorToolTests(unittest.TestCase):
             )
         self.assertFalse((outside_dir / "new.txt").exists())
 
+    def test_rejects_nul_path_without_exposing_input(self) -> None:
+        nul_path = f"{self.workspace}/private\x00suffix"
+        with self.assertRaises(ToolFailure) as raised:
+            self.handler(
+                {"command": "view", "path": nul_path},
+                self.workspace,
+            )
+        self.assertEqual(str(raised.exception), "cannot resolve path")
+        self.assertNotIn("private", str(raised.exception))
+
     def test_invalid_arguments_and_range_fail(self) -> None:
         target = self.workspace / "range.txt"
         target.write_text("one\ntwo")

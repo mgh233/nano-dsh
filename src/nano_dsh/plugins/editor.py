@@ -44,8 +44,8 @@ def _resolve(path: str, workspace: Path) -> Path:
     try:
         root = workspace.resolve(strict=True)
         target = candidate.resolve(strict=False)
-    except (OSError, RuntimeError) as error:
-        raise ToolFailure(f"cannot resolve path: {error}") from error
+    except (OSError, RuntimeError, ValueError):
+        raise ToolFailure("cannot resolve path") from None
     if not root.is_dir():
         raise ToolFailure(f"Workspace is not a directory: {workspace}")
     try:
