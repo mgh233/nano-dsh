@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nano-dsh"
+version = "0.1.0"
+description = "A minimal Python teaching implementation of DeepSeek Harness."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+nano-dsh = "nano_dsh.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
