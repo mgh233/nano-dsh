@@ -46,7 +46,7 @@ sequenceDiagram
 7. Agent 追加一个用户 Session Event，并通过 [src/nano_dsh/plugins/deepseek.py](src/nano_dsh/plugins/deepseek.py) 发送 Model Step 1。模型可以返回 `str_replace_editor` 和 `bash` 的 Tool Call。
 8. [src/nano_dsh/plugins/editor.py](src/nano_dsh/plugins/editor.py) 或 [src/nano_dsh/plugins/bash.py](src/nano_dsh/plugins/bash.py) 执行每个调用。[src/nano_dsh/plugins/tools.py](src/nano_dsh/plugins/tools.py) 将预期的 Tool Failure 转换成模型可见的 Tool Result。Agent 将每个结果追加为 `ToolResultEvent`。
 9. 循环会发送后续的 Model Step。它包含先前的 assistant event 和 Tool Result。循环持续到 Provider 返回非空的 final text。该文本写到标准输出。
-10. 只有在 `boot()` 成功返回后，`main()` 才会在其 `finally` block 中调用 `context.dispose()`。如果 Boot 或 Plugin activation 失败，`boot()` 自己会清理 Context 并重新抛出异常。两条清理路径都会让 Fiber 按创建顺序的反向清理。它们的 Effect 会移除 AgentFactory、Tool 注册和归 Fiber 所有的 Service。
+10. `boot()` 成功返回 Context 后，`main()` 的下一条语句会直接调用 `context.dispose()`。如果 Boot 或 Plugin activation 在返回前失败，`boot()` 自己会清理 Context 并重新抛出异常。两条清理路径都会让 Fiber 按创建顺序的反向清理。它们的 Effect 会移除 AgentFactory、Tool 注册和归 Fiber 所有的 Service。
 
 这条 trace 有意保持简洁。它不会打印 API key 或 Reasoning Content。
 
