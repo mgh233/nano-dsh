@@ -107,25 +107,110 @@ def _assert_run(stdout: str, trace: tuple[str, ...]) -> None:
     if not stdout.strip():
         raise AcceptanceFailure("final response is empty")
 
-    required = (
-        "tool: execute str_replace_editor",
-        "tool: execute bash",
-    )
-    for event in required:
-        if event not in trace:
-            raise AcceptanceFailure(f"missing trace event: {event}")
+    headless_started = _single_event(trace, "headless: run started")
+    agent_started = _single_event(trace, "agent: run started")
+    agent_completed = _single_event(trace, "agent: run completed")
+    headless_completed = _single_event(trace, "headless: run completed")
+    if not (
+        headless_started
+        < agent_started
+        < agent_completed
+        < headless_completed
+    ):
+        raise AcceptanceFailure("Agent and Headless lifecycle is out of order")
+    if any(
+        not agent_started < index < agent_completed
+        for index, event in enumerate(trace)
+        if event.startswith(("model: ", "tool: "))
+    ):
+        raise AcceptanceFailure(
+            "Model or Tool event is outside the Agent lifecycle"
+        )
 
-    last_tool = max(
+    tool_completions = (
+        _successful_tool_completions(
+            trace,
+            "str_replace_editor",
+        )
+        + _successful_tool_completions(
+            trace,
+            "bash",
+        )
+    )
+    last_tool_completed = max(tool_completions)
+    if not _has_later_model_step(
+        trace,
+        last_tool_completed,
+        agent_completed,
+    ):
+        raise AcceptanceFailure(
+            "no complete Model Step follows the last Tool completion"
+        )
+
+
+def _single_event(trace: tuple[str, ...], event: str) -> int:
+    indexes = [
+        index
+        for index, candidate in enumerate(trace)
+        if candidate == event
+    ]
+    if len(indexes) != 1:
+        raise AcceptanceFailure(f"expected exactly one trace event: {event}")
+    return indexes[0]
+
+
+def _successful_tool_completions(
+    trace: tuple[str, ...],
+    tool: str,
+) -> tuple[int, ...]:
+    execute_event = f"tool: execute {tool}"
+    complete_event = f"tool: complete {tool}"
+    executions = [
         index
         for index, event in enumerate(trace)
-        if event.startswith("tool: ")
-    )
-    if not any(
-        index > last_tool
-        and re.fullmatch(r"model: step [1-9][0-9]* started", event)
+        if event == execute_event
+    ]
+    completions = tuple(
+        index
         for index, event in enumerate(trace)
+        if event == complete_event
+    )
+    if not executions or not completions:
+        raise AcceptanceFailure(
+            f"Tool did not execute and complete successfully: {tool}"
+        )
+    if any(
+        not any(execution < completion for execution in executions)
+        for completion in completions
     ):
-        raise AcceptanceFailure("no Model Step follows the Tool Executions")
+        raise AcceptanceFailure(
+            f"Tool completion precedes its execution: {tool}"
+        )
+    return completions
+
+
+def _has_later_model_step(
+    trace: tuple[str, ...],
+    last_tool_completed: int,
+    agent_completed: int,
+) -> bool:
+    for index in range(last_tool_completed + 1, agent_completed - 3):
+        match = re.fullmatch(
+            r"model: step ([1-9][0-9]*) started",
+            trace[index],
+        )
+        if match is None:
+            continue
+        step = match.group(1)
+        expected = (
+            f"model: step {step} started",
+            "model: request",
+            "model: response",
+            f"model: step {step} completed",
+        )
+        if trace[index : index + 4] == expected:
+            return True
+    return False
 
 
 def _run_unittest(workspace: Path) -> bool:

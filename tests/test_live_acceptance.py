@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tempfile
@@ -16,17 +17,62 @@ import live_acceptance
 
 
 GOOD_TRACE = """\
+headless: run started
+agent: run started
+model: step 1 started
+model: request
+model: response
+model: step 1 completed
 tool: execute str_replace_editor
 tool: complete str_replace_editor
 tool: execute bash
 tool: complete bash
 model: step 2 started
+model: request
+model: response
 model: step 2 completed
+agent: run completed
+headless: run completed
 """
+
+EXPECTED_FIXTURE_RESULTS = {
+    "logic-bug": (
+        "FAIL",
+        (
+            "test_all_units_can_be_reserved "
+            "(test_inventory.AvailableUnitsTests."
+            "test_all_units_can_be_reserved)",
+            "test_subtracts_reserved_units "
+            "(test_inventory.AvailableUnitsTests."
+            "test_subtracts_reserved_units)",
+        ),
+    ),
+    "boundary-bug": (
+        "FAIL",
+        (
+            "test_keeps_a_complete_final_batch "
+            "(test_batches.MakeBatchesTests."
+            "test_keeps_a_complete_final_batch)",
+            "test_keeps_a_short_final_batch "
+            "(test_batches.MakeBatchesTests."
+            "test_keeps_a_short_final_batch)",
+        ),
+    ),
+    "missing-implementation": (
+        "ERROR",
+        (
+            "test_formats_a_positive_score "
+            "(test_labels.FormatLabelTests."
+            "test_formats_a_positive_score)",
+            "test_formats_zero "
+            "(test_labels.FormatLabelTests.test_formats_zero)",
+        ),
+    ),
+}
 
 
 class OriginalFixtureTests(unittest.TestCase):
-    def test_each_original_fixture_fails(self) -> None:
+    def test_each_original_fixture_has_its_expected_failure(self) -> None:
         for fixture in live_acceptance.FIXTURES:
             with self.subTest(fixture=fixture.name):
                 completed = subprocess.run(
@@ -43,7 +89,35 @@ class OriginalFixtureTests(unittest.TestCase):
                     text=True,
                     check=False,
                 )
-                self.assertNotEqual(completed.returncode, 0)
+                output = completed.stdout + completed.stderr
+                observed = {
+                    test_id: result
+                    for test_id, result in re.findall(
+                        r"^(test_[^\n]+) \.\.\. (FAIL|ERROR|ok)$",
+                        output,
+                        re.MULTILINE,
+                    )
+                }
+                expected_result, expected_ids = EXPECTED_FIXTURE_RESULTS[
+                    fixture.name
+                ]
+
+                self.assertEqual(completed.returncode, 1)
+                self.assertIn("Ran 2 tests", output)
+                self.assertEqual(
+                    observed,
+                    {
+                        test_id: expected_result
+                        for test_id in expected_ids
+                    },
+                )
+                if expected_result == "FAIL":
+                    self.assertIn("FAILED (failures=2)", output)
+                    self.assertIn("AssertionError", output)
+                    self.assertNotIn("NotImplementedError", output)
+                else:
+                    self.assertIn("FAILED (errors=2)", output)
+                    self.assertIn("NotImplementedError", output)
 
 
 class LiveAcceptanceHarnessTests(unittest.TestCase):
@@ -149,17 +223,53 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
     def test_trace_contract_failures_preserve_workspace(self) -> None:
         cases = {
             "empty final": (" \n", GOOD_TRACE),
-            "missing editor": (
+            "failed-only tools": (
                 "done\n",
-                GOOD_TRACE.replace("tool: execute str_replace_editor\n", ""),
+                GOOD_TRACE
+                .replace(
+                    "tool: complete str_replace_editor",
+                    "tool: failed str_replace_editor",
+                )
+                .replace("tool: complete bash", "tool: failed bash"),
             ),
-            "missing bash": (
+            "missing Provider request": (
                 "done\n",
-                GOOD_TRACE.replace("tool: execute bash\n", ""),
+                GOOD_TRACE.replace(
+                    "model: step 2 started\nmodel: request\n",
+                    "model: step 2 started\n",
+                ),
             ),
-            "no later Model Step": (
+            "missing Provider response": (
                 "done\n",
-                GOOD_TRACE.replace("model: step 2 started\n", ""),
+                GOOD_TRACE.replace(
+                    "model: step 2 started\n"
+                    "model: request\nmodel: response\n"
+                    "model: step 2 completed",
+                    "model: step 2 started\n"
+                    "model: request\nmodel: step 2 completed",
+                ),
+            ),
+            "later Model Step out of order": (
+                "done\n",
+                GOOD_TRACE.replace(
+                    "model: step 2 started\n"
+                    "model: request\nmodel: response\n"
+                    "model: step 2 completed",
+                    "model: step 2 started\n"
+                    "model: response\nmodel: request\n"
+                    "model: step 2 completed",
+                ),
+            ),
+            "missing Headless lifecycle": (
+                "done\n",
+                GOOD_TRACE.replace("headless: run completed\n", ""),
+            ),
+            "Tool event after Agent completion": (
+                "done\n",
+                GOOD_TRACE.replace(
+                    "agent: run completed\n",
+                    "agent: run completed\ntool: execute bash\n",
+                ),
             ),
         }
         for name, response in cases.items():
@@ -168,6 +278,25 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
                     self.fixture,
                     self.key_file,
                     invoke_cli=lambda _: response,
+                    run_tests=lambda _: True,
+                )
+                self.assertFalse(result.passed)
+                self.assertTrue(result.workspace.exists())
+
+    def test_duplicate_lifecycle_events_are_rejected(self) -> None:
+        lifecycle_events = (
+            "headless: run started",
+            "agent: run started",
+            "agent: run completed",
+            "headless: run completed",
+        )
+        for event in lifecycle_events:
+            with self.subTest(event=event):
+                trace = GOOD_TRACE.replace(event, f"{event}\n{event}")
+                result = live_acceptance._run_fixture(
+                    self.fixture,
+                    self.key_file,
+                    invoke_cli=lambda _: ("done\n", trace),
                     run_tests=lambda _: True,
                 )
                 self.assertFalse(result.passed)
