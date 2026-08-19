@@ -82,8 +82,10 @@ class LoaderTests(unittest.TestCase):
         profile = self.write("profiles/main.toml", 'bundles = ["loop", 1]')
         (profile.parent / "loop").symlink_to("loop")
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError) as caught:
             read_profile(profile)
+        self.assertIs(type(caught.exception), RuntimeError)
+        self.assertNotIsInstance(caught.exception, RunFailure)
 
     def test_consumer_before_provider_is_not_sorted(self) -> None:
         self.module("test_loader_consumer")
