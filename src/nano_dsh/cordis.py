@@ -173,14 +173,19 @@ class Context:
         self._transition(fiber, FiberState.ACTIVE)
 
     def _unload(self, fiber: Fiber, target: FiberState) -> None:
+        errors: list[Exception] = []
         for name, owner in tuple(self._providers.items()):
             if owner is fiber:
-                self._suspend_consumers(name)
+                self._suspend_consumers(name, errors)
         self._transition(fiber, FiberState.UNLOADING)
         try:
             self._cleanup(fiber)
+        except Exception as error:
+            errors.append(error)
         finally:
             self._transition(fiber, target)
+        if errors:
+            raise errors[0]
 
     def _cleanup(self, fiber: Fiber) -> None:
         first_error: Exception | None = None
@@ -213,13 +218,13 @@ class Context:
         del self._services[name]
         self.emit("service", f"{name}: removed")
 
-    def _suspend_consumers(self, name: str) -> None:
+    def _suspend_consumers(self, name: str, errors: list[Exception]) -> None:
         for fiber in reversed(self.fibers):
-            if (
-                fiber.state is FiberState.ACTIVE
-                and name in fiber.spec.inject
-            ):
-                self._unload(fiber, FiberState.PENDING)
+            if fiber.state is FiberState.ACTIVE and name in fiber.spec.inject:
+                try:
+                    self._unload(fiber, FiberState.PENDING)
+                except Exception as error:
+                    errors.append(error)
 
     def _service_is_available(self, name: str) -> bool:
         if name not in self._services:

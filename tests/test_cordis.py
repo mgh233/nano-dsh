@@ -108,6 +108,51 @@ class ContextTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             ctx.get("model")
 
+    def test_disposer_failure_does_not_interrupt_provider_removal(self) -> None:
+        ctx = Context()
+        cleanup: list[str] = []
+        failure = ValueError("consumer cleanup failed")
+
+        def healthy_consumer(context: Context) -> None:
+            context.effect(lambda: lambda: cleanup.append("healthy"))
+
+        def failing_consumer(context: Context) -> None:
+            def dispose() -> None:
+                cleanup.append("failing")
+                raise failure
+
+            context.effect(lambda: dispose)
+
+        healthy = ctx.add_fiber(spec("healthy", "model"), healthy_consumer)
+        failing = ctx.add_fiber(spec("failing", "model"), failing_consumer)
+
+        def provide_model(context: Context) -> None:
+            context.effect(lambda: lambda: cleanup.append("provider"))
+            context.provide("model", "old")
+
+        provider = ctx.add_fiber(spec("provider"), provide_model)
+
+        with self.assertRaisesRegex(ValueError, "consumer cleanup failed") as raised:
+            ctx.dispose_fiber(provider)
+
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(provider.state, FiberState.DISPOSED)
+        self.assertEqual(healthy.state, FiberState.PENDING)
+        self.assertEqual(failing.state, FiberState.PENDING)
+        self.assertEqual(cleanup, ["failing", "healthy", "provider"])
+        with self.assertRaises(KeyError):
+            ctx.get("model")
+
+        replacement = ctx.add_fiber(
+            spec("replacement"),
+            lambda context: context.provide("model", "new"),
+        )
+
+        self.assertEqual(replacement.state, FiberState.ACTIVE)
+        self.assertEqual(healthy.state, FiberState.ACTIVE)
+        self.assertEqual(failing.state, FiberState.ACTIVE)
+        self.assertEqual(ctx.get("model"), "new")
+
     def test_replacement_provider_reactivates_consumer(self) -> None:
         ctx = Context()
         seen: list[str] = []
