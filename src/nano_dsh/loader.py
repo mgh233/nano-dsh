@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import importlib
 import tomllib
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .contracts import PluginSpec, RunFailure
 
@@ -68,8 +69,9 @@ class Loader:
                 if spec.id in seen:
                     raise RunFailure(f"Duplicate Plugin id: {spec.id}")
                 seen.add(spec.id)
-                apply = _load_apply(spec)
-                self._context.add_fiber(spec, apply)  # type: ignore[attr-defined]
+                raw_apply = _load_apply(spec)
+                fiber_apply = _bind_config(raw_apply, spec.config)
+                self._context.add_fiber(spec, fiber_apply)  # type: ignore[attr-defined]
                 loaded.append(spec)
         return tuple(loaded)
 
@@ -103,7 +105,9 @@ def _plugin_spec(path: Path, entry: dict[str, Any]) -> PluginSpec:
     return PluginSpec(plugin_id, module, tuple(inject), config)
 
 
-def _load_apply(spec: PluginSpec) -> object:
+def _load_apply(
+    spec: PluginSpec,
+) -> Callable[[object, Mapping[str, object]], object]:
     try:
         module = importlib.import_module(spec.module)
     except ImportError as error:
@@ -111,4 +115,14 @@ def _load_apply(spec: PluginSpec) -> object:
     apply = getattr(module, "apply", None)
     if not callable(apply):
         raise RunFailure(f"Plugin {spec.id} has no callable apply(ctx, config)")
-    return apply
+    return cast(Callable[[object, Mapping[str, object]], object], apply)
+
+
+def _bind_config(
+    raw_apply: Callable[[object, Mapping[str, object]], object],
+    config: Mapping[str, object],
+) -> Callable[[object], object]:
+    def fiber_apply(context: object) -> object:
+        return raw_apply(context, config)
+
+    return fiber_apply
