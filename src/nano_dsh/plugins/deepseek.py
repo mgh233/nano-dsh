@@ -7,17 +7,16 @@ import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 from nano_dsh import contracts as c
 
 
 SYSTEM_PROMPT = "You are a coding agent. Use the provided tools to inspect and modify the Workspace. Continue until the task is complete. Then give a concise final response."
-Transport = Callable[[str, Mapping[str, str], bytes], bytes]
+_ENDPOINT = "https://api.deepseek.com/chat/completions"
+Transport = Callable[[urllib.request.Request], bytes]
 
 
-def _post(url: str, headers: Mapping[str, str], body: bytes) -> bytes:
-    request = urllib.request.Request(url, body, dict(headers), method="POST")
+def _send(request: urllib.request.Request) -> bytes:
     with urllib.request.urlopen(request, timeout=300) as response:
         return response.read()
 
@@ -27,7 +26,6 @@ class DeepSeekProvider:
         self,
         api_key: str,
         *,
-        base_url: str = "https://api.deepseek.com",
         model: str = "deepseek-v4-flash",
         thinking: str = "enabled",
         reasoning_effort: str = "high",
@@ -37,7 +35,6 @@ class DeepSeekProvider:
     ) -> None:
         if not isinstance(api_key, str) or not api_key.strip():
             raise c.RunFailure("DeepSeek API key must be non-empty")
-        self._base_url = _base_url(base_url)
         if not isinstance(model, str) or not model.strip():
             raise c.RunFailure("DeepSeek model must be a non-empty string")
         if thinking not in ("enabled", "disabled"):
@@ -50,7 +47,7 @@ class DeepSeekProvider:
         self._model = model
         self._thinking = thinking
         self._reasoning_effort = reasoning_effort
-        self._transport = transport or _post
+        self._transport = transport or _send
         self._trace = trace
 
     def complete(
@@ -75,8 +72,10 @@ class DeepSeekProvider:
                    "Content-Type": "application/json"}
         self._emit("request")
         try:
-            url = f"{self._base_url}/chat/completions"
-            raw = self._transport(url, headers, body)
+            request = urllib.request.Request(
+                _ENDPOINT, body, headers, method="POST"
+            )
+            raw = self._transport(request)
         except Exception:
             raise c.RunFailure("DeepSeek request failed") from None
         self._emit("response")
@@ -91,20 +90,6 @@ class DeepSeekProvider:
     def _emit(self, phase: str) -> None:
         if self._trace is not None:
             self._trace("model", phase)
-
-
-def _base_url(value: object) -> str:
-    if not isinstance(value, str):
-        raise c.RunFailure("DeepSeek base_url must be an HTTPS origin")
-    parsed = urlsplit(value)
-    invalid = (
-        parsed.scheme != "https", not parsed.netloc, parsed.username is not None,
-        parsed.password is not None, parsed.path not in ("", "/"),
-        bool(parsed.query), bool(parsed.fragment),
-    )
-    if any(invalid):
-        raise c.RunFailure("DeepSeek base_url must be an HTTPS origin")
-    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def _messages(events: Sequence[c.SessionEvent]) -> list[dict[str, Any]]:
@@ -162,11 +147,11 @@ def _assistant_output(payload: object) -> c.AssistantOutput:
     elif not isinstance(raw_calls, list):
         raise c.RunFailure("DeepSeek response has an invalid shape")
     calls = tuple(_parse_tool_call(call) for call in raw_calls)
-    finish = choice.get("finish_reason")
-    if finish is not None:
-        expected = "tool_calls" if calls else "stop"
-        if finish != expected:
-            raise c.RunFailure("DeepSeek response did not finish normally")
+    if "finish_reason" not in choice:
+        raise c.RunFailure("DeepSeek response has no finish_reason")
+    expected = "tool_calls" if calls else "stop"
+    if choice["finish_reason"] != expected:
+        raise c.RunFailure("DeepSeek response did not finish normally")
     return c.AssistantOutput(content, reasoning, calls)
 
 
@@ -211,7 +196,7 @@ def _read_api_key(path: Path) -> str:
 def apply(ctx: Any, config: Mapping[str, object]) -> None:
     if not isinstance(config, Mapping):
         raise c.RunFailure("DeepSeek Plugin config must be a mapping")
-    allowed = {"base_url", "model", "thinking", "reasoning_effort", "stream"}
+    allowed = {"model", "thinking", "reasoning_effort", "stream"}
     if not set(config).issubset(allowed):
         raise c.RunFailure("DeepSeek Plugin config has unknown fields")
     args = ctx.get("cmdline_args")
@@ -219,7 +204,6 @@ def apply(ctx: Any, config: Mapping[str, object]) -> None:
         raise c.RunFailure("cmdline_args must be CommandLineArgs")
     provider = DeepSeekProvider(
         _read_api_key(args.api_key_file),
-        base_url=config.get("base_url", "https://api.deepseek.com"),
         model=config.get("model", "deepseek-v4-flash"),
         thinking=config.get("thinking", "enabled"),
         reasoning_effort=config.get("reasoning_effort", "high"),

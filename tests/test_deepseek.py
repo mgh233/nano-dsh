@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 from nano_dsh.contracts import (
@@ -65,15 +66,10 @@ def _response(
 class RecordingTransport:
     def __init__(self, response: bytes | Exception) -> None:
         self.response = response
-        self.calls: list[tuple[str, dict[str, str], bytes]] = []
+        self.calls: list[urllib.request.Request] = []
 
-    def __call__(
-        self,
-        url: str,
-        headers: object,
-        body: bytes,
-    ) -> bytes:
-        self.calls.append((url, dict(headers), body))  # type: ignore[arg-type]
+    def __call__(self, request: urllib.request.Request) -> bytes:
+        self.calls.append(request)
         if isinstance(self.response, Exception):
             raise self.response
         return self.response
@@ -102,7 +98,7 @@ class FakeContext:
 
 
 class DeepSeekProviderTests(unittest.TestCase):
-    def test_default_request_body_and_headers(self) -> None:
+    def test_request_uses_fixed_endpoint_and_default_body(self) -> None:
         transport = RecordingTransport(_response())
         traces: list[tuple[str, str]] = []
         provider = DeepSeekProvider(
@@ -113,11 +109,17 @@ class DeepSeekProviderTests(unittest.TestCase):
 
         provider.complete([UserEvent("fix it")], [_tool()])
 
-        url, headers, raw_body = transport.calls[0]
+        request = transport.calls[0]
+        headers = {name.lower(): value for name, value in request.header_items()}
+        raw_body = request.data
+        self.assertIsInstance(raw_body, bytes)
         body = json.loads(raw_body)
-        self.assertEqual(url, "https://api.deepseek.com/chat/completions")
-        self.assertEqual(headers["Authorization"], f"Bearer {TEST_KEY}")
-        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertEqual(
+            request.full_url,
+            "https://api.deepseek.com/chat/completions",
+        )
+        self.assertEqual(headers["authorization"], f"Bearer {TEST_KEY}")
+        self.assertEqual(headers["content-type"], "application/json")
         self.assertEqual(body["model"], "deepseek-v4-flash")
         self.assertEqual(body["thinking"], {"type": "enabled"})
         self.assertEqual(body["reasoning_effort"], "high")
@@ -166,7 +168,7 @@ class DeepSeekProviderTests(unittest.TestCase):
 
         provider.complete(events, [_tool()])
 
-        messages = json.loads(transport.calls[0][2])["messages"]
+        messages = json.loads(transport.calls[0].data)["messages"]
         self.assertEqual(
             messages[2],
             {
@@ -277,7 +279,6 @@ class DeepSeekProviderTests(unittest.TestCase):
             b'{"choices":[{"message":{"content":"x"},"finish_reason":"stop"}]}',
             b'{"choices":[{"message":{"content":7},"finish_reason":"stop"}]}',
             b'{"choices":[{"message":{"role":"assistant","tool_calls":{}}}]}',
-            _response(finish_reason="length"),
             _response(
                 content=None,
                 tool_calls=[{"id": "bad"}],
@@ -294,10 +295,43 @@ class DeepSeekProviderTests(unittest.TestCase):
                     provider.complete([], [])
                 self.assertNotIn(TEST_KEY, str(caught.exception))
 
+    def test_finish_reason_is_required_and_matches_tool_calls(self) -> None:
+        missing = json.loads(_response(content=TEST_KEY))
+        del missing["choices"][0]["finish_reason"]
+        call = {
+            "id": "call-1",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": "{}"},
+        }
+        invalid_responses = [
+            json.dumps(missing).encode(),
+            _response(content=TEST_KEY, finish_reason="length"),
+            _response(
+                content=TEST_KEY,
+                tool_calls=[call],
+                finish_reason="stop",
+            ),
+            _response(content=TEST_KEY, finish_reason="tool_calls"),
+        ]
+        for response in invalid_responses:
+            with self.subTest(response=response[:60]):
+                provider = DeepSeekProvider(
+                    TEST_KEY,
+                    transport=RecordingTransport(response),
+                )
+                with self.assertRaises(RunFailure) as caught:
+                    provider.complete([], [])
+                self.assertNotIn(TEST_KEY, str(caught.exception))
+
+    def test_constructor_does_not_accept_base_url(self) -> None:
+        with self.assertRaises(TypeError):
+            DeepSeekProvider(
+                TEST_KEY,
+                base_url="https://attacker.example",  # type: ignore[call-arg]
+            )
+
     def test_invalid_constructor_configuration_fails(self) -> None:
         cases = [
-            {"base_url": "http://api.deepseek.com"},
-            {"base_url": "https://api.deepseek.com/v1"},
             {"model": ""},
             {"thinking": "sometimes"},
             {"reasoning_effort": "medium"},
@@ -334,13 +368,21 @@ class DeepSeekPluginTests(unittest.TestCase):
         invalid = [
             {"unknown": True},
             {"stream": "false"},
-            {"base_url": 7},
         ]
         for config in invalid:
             with self.subTest(config=config):
                 with self.assertRaises(RunFailure) as caught:
                     apply(FakeContext(self._args()), config)
                 self.assertNotIn(TEST_KEY, str(caught.exception))
+
+    def test_plugin_config_rejects_base_url(self) -> None:
+        self.key_file.write_text(TEST_KEY)
+        with self.assertRaises(RunFailure) as caught:
+            apply(
+                FakeContext(self._args()),
+                {"base_url": "https://attacker.example"},
+            )
+        self.assertNotIn(TEST_KEY, str(caught.exception))
 
     def test_apply_provides_fiber_owned_service_and_disposes_it(self) -> None:
         self.key_file.write_text(TEST_KEY + "\n")
