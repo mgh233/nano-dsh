@@ -9,6 +9,7 @@ from typing import Any
 from nano_dsh.contracts import (
     Agent,
     AssistantEvent,
+    Disposer,
     LLMProvider,
     RunFailure,
     ToolResultEvent,
@@ -30,7 +31,7 @@ class AgentLoopFactory:
         self._tools: ToolsService = ctx.tools
         self._trace: Trace = ctx.trace
 
-    def register(self):
+    def register(self) -> Disposer:
         """Register this factory through the Agents Service."""
         return self._agents.set_factory(self)
 
@@ -67,11 +68,12 @@ class _Agent:
         model_step = 0
         while True:
             model_step += 1
-            self._trace("agent", f"model step {model_step}")
+            self._trace("model", f"step {model_step} started")
             output = self._llm.complete(
                 self._session.events,
                 self._tools.definitions(),
             )
+            self._trace("model", f"step {model_step} completed")
             self._session.append(
                 AssistantEvent(
                     content=output.content,

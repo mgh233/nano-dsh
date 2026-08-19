@@ -47,7 +47,10 @@ class FakeContext:
 
 
 class ScriptedProvider:
-    def __init__(self, responses: Sequence[AssistantOutput]) -> None:
+    def __init__(
+        self,
+        responses: Sequence[AssistantOutput | BaseException],
+    ) -> None:
         self._responses = list(responses)
         self.events: list[tuple[SessionEvent, ...]] = []
         self.tools: list[tuple[ToolDefinition, ...]] = []
@@ -61,7 +64,10 @@ class ScriptedProvider:
         self.tools.append(tuple(definitions))
         if not self._responses:
             raise AssertionError("Scripted Provider exhausted")
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 class CountingSessions(SessionsService):
@@ -238,6 +244,18 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         agent_loop.apply(ctx, {})
         return ctx
 
+    def test_factory_registration_delays_agent_creation(self) -> None:
+        provider = ScriptedProvider((AssistantOutput("Done."),))
+
+        ctx = self.make_context(provider)
+
+        self.assertEqual(ctx.sessions.created, [])
+        self.assertEqual(provider.events, [])
+        agent = ctx.agents.create(Path("/workspace"))
+        self.assertEqual(len(ctx.sessions.created), 1)
+        self.assertEqual(provider.events, [])
+        self.assertEqual(agent.run("task"), "Done.")
+
     def test_two_tool_calls_run_in_order_before_final_response(self) -> None:
         calls = (
             ToolCall("call-1", "record", '{"value": "first"}'),
@@ -302,12 +320,49 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(
             {category for category, message in ctx.traces},
-            {"agent", "tool"},
+            {"agent", "model", "tool"},
         )
+        self.assertNotIn("private reasoning", repr(ctx.traces))
 
         ctx.dispose_effects()
         with self.assertRaisesRegex(RunFailure, "no AgentFactory"):
             ctx.agents.create(Path("/workspace"))
+
+    def test_tool_failures_become_results_and_continue(self) -> None:
+        calls = (
+            ToolCall("bad-json", "inspect", "{"),
+            ToolCall("unknown", "missing", "{}"),
+            ToolCall("failure", "reject", "{}"),
+        )
+        provider = ScriptedProvider(
+            (
+                AssistantOutput(content=None, tool_calls=calls),
+                AssistantOutput(content="Recovered."),
+            )
+        )
+        ctx = self.make_context(provider)
+        ctx.tools.register(
+            definition("inspect", lambda arguments, workspace: "unused")
+        )
+
+        def reject(arguments: object, workspace: Path) -> str:
+            raise ToolFailure("bad input")
+
+        ctx.tools.register(definition("reject", reject))
+
+        result = ctx.agents.create(Path("/workspace")).run("task")
+
+        self.assertEqual(result, "Recovered.")
+        results = provider.events[1][-3:]
+        self.assertTrue(
+            all(isinstance(event, ToolResultEvent) for event in results)
+        )
+        self.assertTrue(
+            all(event.content.startswith("Error:") for event in results)
+        )
+        self.assertIn("invalid JSON", results[0].content)
+        self.assertIn("unknown Tool", results[1].content)
+        self.assertIn("bad input", results[2].content)
 
     def test_unexpected_tool_exception_ends_agent_run(self) -> None:
         provider = ScriptedProvider(
@@ -331,6 +386,13 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(UnexpectedError, "boom"):
             ctx.agents.create(Path("/workspace")).run("task")
 
+    def test_provider_exception_ends_agent_run(self) -> None:
+        provider = ScriptedProvider((OSError("provider unavailable"),))
+        ctx = self.make_context(provider)
+
+        with self.assertRaisesRegex(OSError, "provider unavailable"):
+            ctx.agents.create(Path("/workspace")).run("task")
+
     def test_empty_final_response_fails_visibly(self) -> None:
         for content in (None, "", "   "):
             with self.subTest(content=content):
@@ -339,6 +401,27 @@ class AgentLoopIntegrationTests(unittest.TestCase):
 
                 with self.assertRaisesRegex(RunFailure, "non-empty content"):
                     ctx.agents.create(Path("/workspace")).run("task")
+
+    def test_agent_has_no_model_step_cap(self) -> None:
+        tool_steps = 1_001
+        responses = [
+            AssistantOutput(
+                content=None,
+                tool_calls=(ToolCall(str(index), "tick", "{}"),),
+            )
+            for index in range(tool_steps)
+        ]
+        responses.append(AssistantOutput(content="Done."))
+        provider = ScriptedProvider(responses)
+        ctx = self.make_context(provider)
+        ctx.tools.register(
+            definition("tick", lambda arguments, workspace: "ok")
+        )
+
+        result = ctx.agents.create(Path("/workspace")).run("task")
+
+        self.assertEqual(result, "Done.")
+        self.assertEqual(len(provider.events), tool_steps + 1)
 
 
 if __name__ == "__main__":

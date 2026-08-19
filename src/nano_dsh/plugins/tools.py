@@ -45,14 +45,17 @@ class ToolsService:
         self._trace("tool", f"execute {call.name}")
         definition = self._definitions.get(call.name)
         if definition is None:
+            self._trace("tool", f"failed {call.name}")
             return f"Error: unknown Tool: {call.name}"
         try:
             arguments = json.loads(call.arguments)
         except json.JSONDecodeError as error:
+            self._trace("tool", f"failed {call.name}")
             return f"Error: invalid JSON arguments: {error.msg}"
         try:
             result = definition.handler(arguments, workspace)
         except ToolFailure as error:
+            self._trace("tool", f"failed {call.name}")
             return f"Error: {error}"
         self._trace("tool", f"complete {call.name}")
         return result
