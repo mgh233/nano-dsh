@@ -1,6 +1,4 @@
-"""Assemble a Context from root Services and a declarative Profile."""
-
-from __future__ import annotations
+# Assemble a Context from root Services and a declarative Profile.
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -15,7 +13,7 @@ def boot(
     trace: Trace,
     context_factory: Callable[[Trace], object] | None = None,
 ) -> object:
-    """Create, assemble, audit, and return an active Context."""
+    # Create, assemble, audit, and return an active Context.
     if context_factory is None:
         from .cordis import Context
 
@@ -34,7 +32,7 @@ def boot(
 
 def _require_active(context: object) -> None:
     for fiber in context.fibers:  # type: ignore[attr-defined]
-        state = _state_name(fiber.state)
+        state = getattr(fiber.state, "name", fiber.state)
         if state == "ACTIVE":
             continue
         fiber_id = getattr(fiber, "id", None)
@@ -44,7 +42,3 @@ def _require_active(context: object) -> None:
             missing = ", ".join(context.missing(fiber))  # type: ignore[attr-defined]
             raise RunFailure(f"Plugin Fiber {fiber_id} is PENDING; missing Services: {missing}")
         raise RunFailure(f"Plugin Fiber {fiber_id} is {state}; expected ACTIVE")
-
-
-def _state_name(state: object) -> str:
-    return getattr(state, "name", state)

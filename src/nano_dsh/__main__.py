@@ -1,6 +1,4 @@
-"""Headless nano-dsh command-line application."""
-
-from __future__ import annotations
+# Headless nano-dsh command-line application.
 
 import argparse
 import sys
@@ -34,10 +32,7 @@ def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     profile = Path(__file__).resolve().parents[2] / "profiles/headless.toml"
     context = boot(profile, {"cmdline_args": args}, _trace)
-    try:
-        return
-    finally:
-        context.dispose()  # type: ignore[attr-defined]
+    context.dispose()  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

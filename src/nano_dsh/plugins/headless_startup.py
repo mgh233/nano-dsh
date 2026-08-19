@@ -1,4 +1,4 @@
-"""Headless CLI input Service Plugin."""
+# Headless CLI input Service Plugin.
 
 from collections.abc import Mapping
 from pathlib import Path

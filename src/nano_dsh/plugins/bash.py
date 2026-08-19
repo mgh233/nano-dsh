@@ -1,6 +1,4 @@
-"""One-shot Bash Tool Plugin."""
-
-from __future__ import annotations
+# One-shot Bash Tool Plugin.
 
 import os
 import subprocess
@@ -41,9 +39,7 @@ def _handle(arguments: object, workspace: Path) -> str:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        raise ToolFailure(
-            f"Bash command timed out after {TIMEOUT_SECONDS} seconds"
-        ) from None
+        raise ToolFailure(f"Bash command timed out after {TIMEOUT_SECONDS} seconds") from None
     except OSError as error:
         raise ToolFailure(f"Bash execution failed: {error}") from error
 
@@ -51,21 +47,18 @@ def _handle(arguments: object, workspace: Path) -> str:
     if completed.returncode == 0:
         return output[:OUTPUT_LIMIT]
     marker = f"[exit code: {completed.returncode}]"
-    separator = "" if not output or output.endswith("\n") else "\n"
-    suffix = separator + marker
+    suffix = ("" if not output or output.endswith("\n") else "\n") + marker
     return output[: OUTPUT_LIMIT - len(suffix)] + suffix
 
 
 def apply(ctx: Any, config: Mapping[str, object]) -> None:
-    """Register the Bash Tool for the current Fiber."""
+    # Register the Bash Tool for the current Fiber.
     if not isinstance(config, Mapping) or config:
         raise RunFailure("bash Plugin config must be empty")
     tools = ctx.get("tools")
     definition = ToolDefinition(
         name="bash",
-        description=(
-            "Run one command in a fresh Bash process in the Workspace."
-        ),
+        description="Run one command in a fresh Bash process in the Workspace.",
         parameters={
             "type": "object",
             "properties": {"command": {"type": "string"}},

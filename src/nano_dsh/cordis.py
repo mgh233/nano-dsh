@@ -1,6 +1,4 @@
-"""A minimal Service-driven Plugin lifecycle runtime."""
-
-from __future__ import annotations
+# A minimal Service-driven Plugin lifecycle runtime.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -10,8 +8,7 @@ from nano_dsh.contracts import Disposer, PluginSpec, RunFailure, Trace
 
 
 class FiberState(Enum):
-    """The lifecycle state of one Plugin Fiber."""
-
+    # The lifecycle state of one Plugin Fiber.
     PENDING = auto()
     LOADING = auto()
     ACTIVE = auto()
@@ -19,48 +16,36 @@ class FiberState(Enum):
     FAILED = auto()
     DISPOSED = auto()
 
-
-@dataclass
-class Effect:
-    """One disposer owned by a Fiber."""
-
-    dispose: Disposer
-
-
 PluginApply = Callable[["Context"], None]
 
 
 @dataclass
 class Fiber:
-    """One Plugin instance and the Effects created by its activation."""
-
+    # One Plugin instance and the Effects created by its activation.
     id: str
     spec: PluginSpec
     apply: PluginApply = field(repr=False)
     state: FiberState = FiberState.PENDING
-    effects: list[Effect] = field(default_factory=list, repr=False)
+    effects: list[Disposer] = field(default_factory=list, repr=False)
 
 
 class Context:
-    """Store Services and activate Fibers when their requirements are ready."""
+    # Store Services and activate Fibers when their requirements are ready.
 
     def __init__(self, trace: Trace | None = None) -> None:
         self.fibers: list[Fiber] = []
         self._trace = trace
-        self._services: dict[str, object] = {}
-        self._providers: dict[str, Fiber | None] = {}
+        self._services: dict[str, tuple[object, Fiber | None]] = {}
         self._current: Fiber | None = None
         self._disposing = False
 
     def provide_root(self, name: str, value: object) -> None:
-        """Publish a Service that is owned by the Context."""
-
+        # Publish a Service that is owned by the Context.
         self._register_service(name, value, None)
         self._stabilize()
 
     def add_fiber(self, spec: PluginSpec, apply: PluginApply) -> Fiber:
-        """Create a Fiber and activate every newly ready Fiber."""
-
+        # Create a Fiber and activate every newly ready Fiber.
         if any(fiber.id == spec.id for fiber in self.fibers):
             raise RunFailure(f"duplicate Fiber id: {spec.id}")
         fiber = Fiber(spec.id, spec, apply)
@@ -70,35 +55,29 @@ class Context:
         return fiber
 
     def get(self, name: str) -> object:
-        """Return one currently available Service."""
-
+        # Return one currently available Service.
         if not self._service_is_available(name):
             raise KeyError(f"Service is unavailable: {name}")
-        return self._services[name]
+        return self._services[name][0]
 
     def provide(self, name: str, value: object) -> None:
-        """Publish a Service owned by the loading Fiber."""
-
+        # Publish a Service owned by the loading Fiber.
         owner = self._loading_fiber("provide a Service")
         self._register_service(name, value, owner)
-        owner.effects.append(
-            Effect(lambda: self._remove_service(name, owner))
-        )
+        owner.effects.append(lambda: self._remove_service(name, owner))
 
     def effect(self, setup: Callable[[], Disposer | None]) -> None:
-        """Run setup and bind its optional disposer to the loading Fiber."""
-
+        # Run setup and bind its optional disposer to the loading Fiber.
         owner = self._loading_fiber("create an Effect")
         disposer = setup()
         if disposer is None:
             return
         if not callable(disposer):
             raise TypeError("Effect setup must return a disposer or None")
-        owner.effects.append(Effect(disposer))
+        owner.effects.append(disposer)
 
     def dispose_fiber(self, fiber: Fiber) -> None:
-        """Permanently dispose one Fiber."""
-
+        # Permanently dispose one Fiber.
         if not any(item is fiber for item in self.fibers):
             raise ValueError("Fiber does not belong to this Context")
         if fiber.state is FiberState.DISPOSED:
@@ -114,8 +93,7 @@ class Context:
             self._stabilize()
 
     def dispose(self) -> None:
-        """Dispose all Fibers in reverse creation order."""
-
+        # Dispose all Fibers in reverse creation order.
         first_error: Exception | None = None
         self._disposing = True
         try:
@@ -127,22 +105,19 @@ class Context:
                         first_error = error
         finally:
             self._services.clear()
-            self._providers.clear()
             self._disposing = False
         if first_error is not None:
             raise first_error
 
     def missing(self, fiber: Fiber) -> tuple[str, ...]:
-        """Return the required Service names that are not available."""
-
+        # Return required Service names that are not available.
         return tuple(
             name for name in fiber.spec.inject
             if not self._service_is_available(name)
         )
 
     def emit(self, category: str, message: str) -> None:
-        """Send one concise teaching trace event."""
-
+        # Send one concise teaching trace event.
         if self._trace is not None:
             self._trace(category, message)
 
@@ -174,7 +149,7 @@ class Context:
 
     def _unload(self, fiber: Fiber, target: FiberState) -> None:
         errors: list[Exception] = []
-        for name, owner in tuple(self._providers.items()):
+        for name, (_, owner) in tuple(self._services.items()):
             if owner is fiber:
                 self._suspend_consumers(name, errors)
         self._transition(fiber, FiberState.UNLOADING)
@@ -191,30 +166,24 @@ class Context:
         first_error: Exception | None = None
         while fiber.effects:
             try:
-                fiber.effects.pop().dispose()
+                fiber.effects.pop()()
             except Exception as error:
                 if first_error is None:
                     first_error = error
         if first_error is not None:
             raise first_error
 
-    def _register_service(
-        self,
-        name: str,
-        value: object,
-        owner: Fiber | None,
-    ) -> None:
+    def _register_service(self, name: str, value: object, owner: Fiber | None) -> None:
         if name in self._services:
             raise RunFailure(f"Service already has a Provider: {name}")
-        self._services[name] = value
-        self._providers[name] = owner
+        self._services[name] = (value, owner)
         provider = "root" if owner is None else owner.id
         self.emit("service", f"{name}: provided by {provider}")
 
     def _remove_service(self, name: str, owner: Fiber) -> None:
-        if self._providers.get(name) is not owner:
+        service = self._services.get(name)
+        if service is None or service[1] is not owner:
             raise RunFailure(f"Service Provider ownership changed: {name}")
-        del self._providers[name]
         del self._services[name]
         self.emit("service", f"{name}: removed")
 
@@ -227,10 +196,10 @@ class Context:
                     errors.append(error)
 
     def _service_is_available(self, name: str) -> bool:
-        if name not in self._services:
-            return False
-        owner = self._providers[name]
-        return owner is None or owner.state is FiberState.ACTIVE
+        service = self._services.get(name)
+        return service is not None and (
+            service[1] is None or service[1].state is FiberState.ACTIVE
+        )
 
     def _loading_fiber(self, action: str) -> Fiber:
         if self._current is None or self._current.state is not FiberState.LOADING:
