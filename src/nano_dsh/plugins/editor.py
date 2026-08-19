@@ -180,9 +180,11 @@ def apply(ctx: Any, config: Mapping[str, object]) -> None:
             "type": "object",
             "properties": {
                 "command": {"type": "string", "enum": list(COMMANDS)},
-                **{name: {"type": "string"} for name in ("path", "file_text")},
+                "path": {"type": "string"},
+                "file_text": {"type": "string"},
                 "insert_line": {"type": "integer"},
-                **{name: {"type": "string"} for name in ("new_str", "old_str")},
+                "new_str": {"type": "string"},
+                "old_str": {"type": "string"},
                 "view_range": {
                     "type": "array",
                     "items": {"type": "integer"},

@@ -57,14 +57,20 @@ class _Agent:
             self._trace("model", f"step {model_step} completed")
             self._session.append(
                 AssistantEvent(
-                    output.content, output.reasoning_content, output.tool_calls
+                    content=output.content,
+                    reasoning_content=output.reasoning_content,
+                    tool_calls=output.tool_calls,
                 )
             )
             if output.tool_calls:
                 for call in output.tool_calls:
                     result = self._tools.execute(call, self._workspace)
                     self._session.append(
-                        ToolResultEvent(call.id, call.name, result)
+                        ToolResultEvent(
+                            tool_call_id=call.id,
+                            name=call.name,
+                            content=result,
+                        )
                     )
                 continue
             if output.content is None or not output.content.strip():

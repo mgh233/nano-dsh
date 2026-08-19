@@ -42,9 +42,12 @@ def read_bundle(path: Path) -> Bundle:
     entries = data.get("plugins")
     if not isinstance(entries, list):
         raise RunFailure(f"Bundle {path} must contain a plugins array")
-    if not all(isinstance(entry, dict) for entry in entries):
-        raise RunFailure(f"Bundle {path} has a non-table Plugin entry")
-    return Bundle(tuple(_plugin_spec(path, entry) for entry in entries))
+    plugins: list[PluginSpec] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise RunFailure(f"Bundle {path} has a non-table Plugin entry")
+        plugins.append(_plugin_spec(path, entry))
+    return Bundle(tuple(plugins))
 
 
 class Loader:
