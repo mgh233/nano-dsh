@@ -25,11 +25,11 @@ class AgentLoopFactory:
     """Create Agents backed by the active core Services."""
 
     def __init__(self, ctx: Any) -> None:
-        self._agents: AgentsService = ctx.agents
-        self._sessions: SessionsService = ctx.sessions
-        self._llm: LLMProvider = ctx.llm
-        self._tools: ToolsService = ctx.tools
-        self._trace: Trace = ctx.trace
+        self._agents: AgentsService = ctx.get("agents")
+        self._sessions: SessionsService = ctx.get("sessions")
+        self._llm: LLMProvider = ctx.get("llm")
+        self._tools: ToolsService = ctx.get("tools")
+        self._trace: Trace = ctx.emit
 
     def register(self) -> Disposer:
         """Register this factory through the Agents Service."""
