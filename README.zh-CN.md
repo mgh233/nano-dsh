@@ -151,15 +151,26 @@ python -m unittest discover -s tests
 
 ### 三 fixture 的 Live Acceptance Suite
 
-计划中的 Live Acceptance Suite 使用三个可丢弃的 Bug Fixture：一个 logic error、一个 boundary error 和一个 missing implementation。每次 run 都必须使用真实 DeepSeek API，同时调用 `str_replace_editor` 和 `bash`，把 Tool Result 返回给后续 Model Step，通过 fixture 的 `unittest` suite，并以 final assistant text 结束。
+仓库已包含 Live Acceptance Suite。它使用三个可丢弃的 Bug Fixture：一个 logic error、一个 boundary error 和一个 missing implementation。要满足验收要求，每次 run 都必须使用真实 DeepSeek API，同时调用 `str_replace_editor` 和 `bash`，把 Tool Result 返回给后续 Model Step，通过 fixture 的 `unittest` suite，并以 final assistant text 结束。
 
-它的验收命令是：
+运行命令：
 
 ```bash
 python scripts/live_acceptance.py --api-key-file .key
 ```
 
-当前 checkout 尚不包含 `fixtures/` 或 `scripts/live_acceptance.py`。该命令是 [PLAN.md](PLAN.md) 中规定的验收方法，不是已经完成或可在本地运行的结果。只有这些文件存在且命令成功退出后，才可以报告 live run 已通过。脚本不得自动 retry。
+成功执行时会输出：
+
+```text
+logic-bug: PASS
+boundary-bug: PASS
+missing-implementation: PASS
+Summary: 3/3 PASS
+```
+
+脚本对每个 fixture 只执行一次。它不会自动 retry。
+
+Verification record（2026-08-20）：在 `main` 上，offline suite 的 94/94 个 test 全部通过；生产 Python 包含 995 行非空、非注释代码，最大文件为 179 行；一次 live command execution 在没有 automatic retry 的情况下完成，logic、boundary 和 missing-implementation fixture 均通过，总计 3/3。这个带日期的记录不保证后续 revision 或 API run 仍得到相同结果。
 
 ## 6. 安全边界和失败行为
 
@@ -167,7 +178,7 @@ python scripts/live_acceptance.py --api-key-file .key
 - 每次 Bash Tool Execution 都启动一个新的 `/bin/bash` 进程。shell state 不会持久化。它有 300 秒 timeout，以及 16,000 字符的 model-visible output limit。
 - `str_replace_editor` 只接受绝对路径。它会解析路径，并拒绝 Workspace 外的目标，包括 symbolic-link escape。这个路径限制不会 sandbox Bash。
 - `.key` 被 Git 忽略。Provider 将一个非空行读入内存。Bash 子进程环境会移除 `DEEPSEEK_API_KEY`。
-- Provider request 或计划中的 live suite 没有 automatic retry。没有 Model Step cap。Provider、configuration、Plugin 或 runtime invariant 失败会让 Agent Run 可见地结束。
+- Provider request 或 live suite 没有 automatic retry。没有 Model Step cap。Provider、configuration、Plugin 或 runtime invariant 失败会让 Agent Run 可见地结束。
 - 预期的 Tool failure 不同。无效 Tool 参数、非零 Bash exit 或非唯一 editor replacement 会成为 Tool Result，Agent 可以在后续 Model Step 中检查它。
 
 请为 live run 使用可丢弃的 Workspace。不要把 secret 或重要 host file 放在可信 Bash 进程可以访问的位置。

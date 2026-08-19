@@ -328,16 +328,29 @@ the temporary Workspace, and prints a sanitized Execution Trace.
 
 ## Hard Completion Criteria
 
-- [ ] `nano-dsh` is an independent Git repository on `main`.
-- [ ] The parent repository ignores `/nano-dsh/`.
-- [ ] `.key` is ignored and absent from Git history.
-- [ ] All five layers and nine Plugins are implemented.
-- [ ] All offline tests pass.
-- [ ] Production Python has at most 1,000 non-empty, non-comment lines.
-- [ ] No production file exceeds 200 such lines.
-- [ ] All three Live Acceptance Runs pass without automatic retries.
-- [ ] Each live run uses both Editor and Bash.
-- [ ] Both READMEs are complete and synchronized.
-- [ ] Every feature branch passes an independent Review Agent gate.
-- [ ] Every feature branch is merged with `--no-ff`.
-- [ ] Final `main` is clean.
+Verification evidence recorded on `main` on 2026-08-20:
+
+- The offline suite passed 94/94 tests.
+- Production Python contained 995 non-empty, non-comment lines. The largest
+  production file contained 179 such lines.
+- One execution of `python scripts/live_acceptance.py --api-key-file .key`
+  completed without automatic retries. The logic, boundary, and
+  missing-implementation fixtures all printed `PASS`; the summary was
+  `3/3 PASS`.
+
+This evidence is a dated result. It does not guarantee later revisions or API
+runs.
+
+- [x] `nano-dsh` is an independent Git repository on `main`.
+- [x] The parent repository ignores `/nano-dsh/`.
+- [x] `.key` is ignored and absent from Git history.
+- [x] All five layers and nine Plugins are implemented.
+- [x] All offline tests pass.
+- [x] Production Python has at most 1,000 non-empty, non-comment lines.
+- [x] No production file exceeds 200 such lines.
+- [x] All three Live Acceptance Runs pass without automatic retries.
+- [x] Each live run uses both Editor and Bash.
+- [x] Both READMEs are complete and synchronized.
+- [x] Every feature branch passes an independent Review Agent gate.
+- [x] Every feature branch is merged with `--no-ff`.
+- [x] Final `main` is clean.
