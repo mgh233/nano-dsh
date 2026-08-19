@@ -8,6 +8,7 @@ from typing import Any
 from nano_dsh.contracts import (
     AssistantEvent,
     AssistantOutput,
+    PluginSpec,
     RunFailure,
     SessionEvent,
     ToolCall,
@@ -16,6 +17,7 @@ from nano_dsh.contracts import (
     ToolResultEvent,
     UserEvent,
 )
+from nano_dsh.cordis import Context, FiberState
 from nano_dsh.plugins import agent_loop, agents, sessions, tools
 from nano_dsh.plugins.agents import AgentsService
 from nano_dsh.plugins.sessions import Session, SessionsService
@@ -24,8 +26,9 @@ from nano_dsh.plugins.tools import ToolsService
 
 class FakeContext:
     def __init__(self, llm: object | None = None) -> None:
-        self.llm = llm
         self.services: dict[str, object] = {}
+        if llm is not None:
+            self.services["llm"] = llm
         self.disposers: list[Callable[[], None]] = []
         self.traces: list[tuple[str, str]] = []
 
@@ -33,12 +36,14 @@ class FakeContext:
         if name in self.services:
             raise RuntimeError(f"duplicate Service: {name}")
         self.services[name] = service
-        setattr(self, name, service)
+
+    def get(self, name: str) -> object:
+        return self.services[name]
 
     def effect(self, action: Callable[[], Callable[[], None]]) -> None:
         self.disposers.append(action())
 
-    def trace(self, category: str, message: str) -> None:
+    def emit(self, category: str, message: str) -> None:
         self.traces.append((category, message))
 
     def dispose_effects(self) -> None:
@@ -109,8 +114,9 @@ class SessionTests(unittest.TestCase):
 
         sessions.apply(ctx, {})
 
-        self.assertIsInstance(ctx.sessions, SessionsService)
-        self.assertIsInstance(ctx.sessions.create(), Session)
+        service = ctx.get("sessions")
+        self.assertIsInstance(service, SessionsService)
+        self.assertIsInstance(service.create(), Session)
 
 
 class AgentsServiceTests(unittest.TestCase):
@@ -141,7 +147,7 @@ class AgentsServiceTests(unittest.TestCase):
 
         agents.apply(ctx, {})
 
-        self.assertIsInstance(ctx.agents, AgentsService)
+        self.assertIsInstance(ctx.get("agents"), AgentsService)
 
 
 class ToolsServiceTests(unittest.TestCase):
@@ -231,7 +237,7 @@ class ToolsServiceTests(unittest.TestCase):
 
         tools.apply(ctx, {})
 
-        self.assertIsInstance(ctx.tools, ToolsService)
+        self.assertIsInstance(ctx.get("tools"), ToolsService)
 
 
 class AgentLoopIntegrationTests(unittest.TestCase):
@@ -239,8 +245,7 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         ctx = FakeContext(provider)
         agents.apply(ctx, {})
         tools.apply(ctx, {})
-        ctx.sessions = CountingSessions()
-        ctx.services["sessions"] = ctx.sessions
+        ctx.services["sessions"] = CountingSessions()
         agent_loop.apply(ctx, {})
         return ctx
 
@@ -248,11 +253,15 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         provider = ScriptedProvider((AssistantOutput("Done."),))
 
         ctx = self.make_context(provider)
+        sessions_service = ctx.get("sessions")
+        agents_service = ctx.get("agents")
 
-        self.assertEqual(ctx.sessions.created, [])
+        self.assertIsInstance(sessions_service, CountingSessions)
+        self.assertIsInstance(agents_service, AgentsService)
+        self.assertEqual(sessions_service.created, [])
         self.assertEqual(provider.events, [])
-        agent = ctx.agents.create(Path("/workspace"))
-        self.assertEqual(len(ctx.sessions.created), 1)
+        agent = agents_service.create(Path("/workspace"))
+        self.assertEqual(len(sessions_service.created), 1)
         self.assertEqual(provider.events, [])
         self.assertEqual(agent.run("task"), "Done.")
 
@@ -275,6 +284,12 @@ class AgentLoopIntegrationTests(unittest.TestCase):
             )
         )
         ctx = self.make_context(provider)
+        sessions_service = ctx.get("sessions")
+        agents_service = ctx.get("agents")
+        tools_service = ctx.get("tools")
+        self.assertIsInstance(sessions_service, CountingSessions)
+        self.assertIsInstance(agents_service, AgentsService)
+        self.assertIsInstance(tools_service, ToolsService)
         order: list[str] = []
         events_during_tools: list[tuple[SessionEvent, ...]] = []
 
@@ -282,17 +297,17 @@ class AgentLoopIntegrationTests(unittest.TestCase):
             self.assertIsInstance(arguments, Mapping)
             value = arguments["value"]  # type: ignore[index]
             order.append(value)
-            events_during_tools.append(ctx.sessions.created[0].events)
+            events_during_tools.append(sessions_service.created[0].events)
             return f"result:{value}"
 
-        ctx.tools.register(definition("record", record))
+        tools_service.register(definition("record", record))
 
-        result = ctx.agents.create(Path("/workspace")).run("Fix the bug")
+        result = agents_service.create(Path("/workspace")).run("Fix the bug")
 
         self.assertEqual(result, "Done.")
         self.assertEqual(order, ["first", "second"])
-        self.assertEqual(len(ctx.sessions.created), 1)
-        session_events = ctx.sessions.created[0].events
+        self.assertEqual(len(sessions_service.created), 1)
+        session_events = sessions_service.created[0].events
         self.assertEqual(
             session_events,
             (
@@ -326,7 +341,7 @@ class AgentLoopIntegrationTests(unittest.TestCase):
 
         ctx.dispose_effects()
         with self.assertRaisesRegex(RunFailure, "no AgentFactory"):
-            ctx.agents.create(Path("/workspace"))
+            agents_service.create(Path("/workspace"))
 
     def test_tool_failures_become_results_and_continue(self) -> None:
         calls = (
@@ -341,16 +356,20 @@ class AgentLoopIntegrationTests(unittest.TestCase):
             )
         )
         ctx = self.make_context(provider)
-        ctx.tools.register(
+        tools_service = ctx.get("tools")
+        agents_service = ctx.get("agents")
+        self.assertIsInstance(tools_service, ToolsService)
+        self.assertIsInstance(agents_service, AgentsService)
+        tools_service.register(
             definition("inspect", lambda arguments, workspace: "unused")
         )
 
         def reject(arguments: object, workspace: Path) -> str:
             raise ToolFailure("bad input")
 
-        ctx.tools.register(definition("reject", reject))
+        tools_service.register(definition("reject", reject))
 
-        result = ctx.agents.create(Path("/workspace")).run("task")
+        result = agents_service.create(Path("/workspace")).run("task")
 
         self.assertEqual(result, "Recovered.")
         results = provider.events[1][-3:]
@@ -374,6 +393,10 @@ class AgentLoopIntegrationTests(unittest.TestCase):
             )
         )
         ctx = self.make_context(provider)
+        tools_service = ctx.get("tools")
+        agents_service = ctx.get("agents")
+        self.assertIsInstance(tools_service, ToolsService)
+        self.assertIsInstance(agents_service, AgentsService)
 
         class UnexpectedError(Exception):
             pass
@@ -381,26 +404,30 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         def crash(arguments: object, workspace: Path) -> str:
             raise UnexpectedError("boom")
 
-        ctx.tools.register(definition("crash", crash))
+        tools_service.register(definition("crash", crash))
 
         with self.assertRaisesRegex(UnexpectedError, "boom"):
-            ctx.agents.create(Path("/workspace")).run("task")
+            agents_service.create(Path("/workspace")).run("task")
 
     def test_provider_exception_ends_agent_run(self) -> None:
         provider = ScriptedProvider((OSError("provider unavailable"),))
         ctx = self.make_context(provider)
+        agents_service = ctx.get("agents")
+        self.assertIsInstance(agents_service, AgentsService)
 
         with self.assertRaisesRegex(OSError, "provider unavailable"):
-            ctx.agents.create(Path("/workspace")).run("task")
+            agents_service.create(Path("/workspace")).run("task")
 
     def test_empty_final_response_fails_visibly(self) -> None:
         for content in (None, "", "   "):
             with self.subTest(content=content):
                 provider = ScriptedProvider((AssistantOutput(content),))
                 ctx = self.make_context(provider)
+                agents_service = ctx.get("agents")
+                self.assertIsInstance(agents_service, AgentsService)
 
                 with self.assertRaisesRegex(RunFailure, "non-empty content"):
-                    ctx.agents.create(Path("/workspace")).run("task")
+                    agents_service.create(Path("/workspace")).run("task")
 
     def test_agent_has_no_model_step_cap(self) -> None:
         tool_steps = 1_001
@@ -414,14 +441,99 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         responses.append(AssistantOutput(content="Done."))
         provider = ScriptedProvider(responses)
         ctx = self.make_context(provider)
-        ctx.tools.register(
+        tools_service = ctx.get("tools")
+        agents_service = ctx.get("agents")
+        self.assertIsInstance(tools_service, ToolsService)
+        self.assertIsInstance(agents_service, AgentsService)
+        tools_service.register(
             definition("tick", lambda arguments, workspace: "ok")
         )
 
-        result = ctx.agents.create(Path("/workspace")).run("task")
+        result = agents_service.create(Path("/workspace")).run("task")
 
         self.assertEqual(result, "Done.")
         self.assertEqual(len(provider.events), tool_steps + 1)
+
+
+class RealContextIntegrationTests(unittest.TestCase):
+    def test_pending_agent_loop_activates_and_runs_with_real_context(self) -> None:
+        call = ToolCall("call-1", "echo", '{"value": "observed"}')
+        provider = ScriptedProvider(
+            (
+                AssistantOutput(
+                    content="Checking.",
+                    reasoning_content="private reasoning",
+                    tool_calls=(call,),
+                ),
+                AssistantOutput(content="Done."),
+            )
+        )
+        traces: list[tuple[str, str]] = []
+        ctx = Context(
+            lambda category, message: traces.append((category, message))
+        )
+        loop_fiber = ctx.add_fiber(
+            PluginSpec(
+                id="agent-loop",
+                module="nano_dsh.plugins.agent_loop",
+                inject=("agents", "sessions", "llm", "tools"),
+            ),
+            lambda context: agent_loop.apply(context, {}),
+        )
+
+        self.assertIs(loop_fiber.state, FiberState.PENDING)
+        self.assertEqual(
+            ctx.missing(loop_fiber),
+            ("agents", "sessions", "llm", "tools"),
+        )
+
+        ctx.add_fiber(
+            PluginSpec("agents", "nano_dsh.plugins.agents"),
+            lambda context: agents.apply(context, {}),
+        )
+        ctx.add_fiber(
+            PluginSpec("sessions", "nano_dsh.plugins.sessions"),
+            lambda context: sessions.apply(context, {}),
+        )
+        ctx.add_fiber(
+            PluginSpec("tools", "nano_dsh.plugins.tools"),
+            lambda context: tools.apply(context, {}),
+        )
+
+        self.assertIs(loop_fiber.state, FiberState.PENDING)
+        self.assertEqual(ctx.missing(loop_fiber), ("llm",))
+        ctx.provide_root("llm", provider)
+        self.assertIs(loop_fiber.state, FiberState.ACTIVE)
+
+        tools_service = ctx.get("tools")
+        agents_service = ctx.get("agents")
+        self.assertIsInstance(tools_service, ToolsService)
+        self.assertIsInstance(agents_service, AgentsService)
+
+        def echo(arguments: object, workspace: Path) -> str:
+            self.assertIsInstance(arguments, Mapping)
+            self.assertEqual(workspace, Path("/workspace"))
+            return arguments["value"]  # type: ignore[index]
+
+        tools_service.register(definition("echo", echo))
+
+        result = agents_service.create(Path("/workspace")).run("Inspect")
+
+        self.assertEqual(result, "Done.")
+        self.assertEqual(
+            provider.events[1],
+            (
+                UserEvent("Inspect"),
+                AssistantEvent(
+                    content="Checking.",
+                    reasoning_content="private reasoning",
+                    tool_calls=(call,),
+                ),
+                ToolResultEvent("call-1", "echo", "observed"),
+            ),
+        )
+        self.assertIn(("tool", "execute echo"), traces)
+        self.assertNotIn("private reasoning", repr(traces))
 
 
 if __name__ == "__main__":

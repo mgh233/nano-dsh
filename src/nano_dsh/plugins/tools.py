@@ -63,4 +63,4 @@ class ToolsService:
 
 def apply(ctx: Any, config: Mapping[str, object]) -> None:
     """Publish the Tool Registry Service."""
-    ctx.provide("tools", ToolsService(ctx.trace))
+    ctx.provide("tools", ToolsService(ctx.emit))
