@@ -77,7 +77,7 @@ class ContextTests(unittest.TestCase):
             context.effect(lambda: lambda: cleanup.append("third"))
 
         fiber = ctx.add_fiber(spec("plugin"), apply)
-        ctx.dispose_fiber(fiber.id)
+        ctx.dispose_fiber(fiber)
 
         self.assertEqual(cleanup, ["third", "second", "first"])
         self.assertEqual(fiber.state, FiberState.DISPOSED)
@@ -85,22 +85,26 @@ class ContextTests(unittest.TestCase):
     def test_provider_disposal_unloads_consumer(self) -> None:
         ctx = Context()
         cleanup: list[str] = []
+
+        def consume_model(context: Context) -> None:
+            context.effect(
+                lambda: lambda: cleanup.append(context.get("model"))
+            )
+
         consumer = ctx.add_fiber(
             spec("consumer", "model"),
-            lambda context: context.effect(
-                lambda: lambda: cleanup.append("consumer")
-            ),
+            consume_model,
         )
         provider = ctx.add_fiber(
             spec("provider"),
-            lambda context: context.provide("model", object()),
+            lambda context: context.provide("model", "ready"),
         )
 
-        ctx.dispose_fiber(provider.id)
+        ctx.dispose_fiber(provider)
 
         self.assertEqual(provider.state, FiberState.DISPOSED)
         self.assertEqual(consumer.state, FiberState.PENDING)
-        self.assertEqual(cleanup, ["consumer"])
+        self.assertEqual(cleanup, ["ready"])
         with self.assertRaises(KeyError):
             ctx.get("model")
 
@@ -116,7 +120,7 @@ class ContextTests(unittest.TestCase):
             lambda context: context.provide("model", "first"),
         )
 
-        ctx.dispose_fiber(first.id)
+        ctx.dispose_fiber(first)
         ctx.add_fiber(
             spec("second-provider"),
             lambda context: context.provide("model", "second"),
@@ -141,6 +145,18 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(fiber.state, FiberState.FAILED)
         self.assertEqual(fiber.effects, [])
         self.assertEqual(cleanup, ["second", "first"])
+
+    def test_trace_omits_service_values(self) -> None:
+        trace: list[tuple[str, str]] = []
+        ctx = Context(lambda category, message: trace.append((category, message)))
+
+        ctx.add_fiber(
+            spec("provider"),
+            lambda context: context.provide("model", "secret-value"),
+        )
+
+        self.assertTrue(trace)
+        self.assertNotIn("secret-value", repr(trace))
 
     def test_context_disposal_uses_reverse_creation_order(self) -> None:
         ctx = Context()

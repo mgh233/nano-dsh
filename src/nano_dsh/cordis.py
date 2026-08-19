@@ -96,12 +96,11 @@ class Context:
             raise TypeError("Effect setup must return a disposer or None")
         owner.effects.append(Effect(disposer))
 
-    def dispose_fiber(self, id: str) -> None:
+    def dispose_fiber(self, fiber: Fiber) -> None:
         """Permanently dispose one Fiber."""
 
-        fiber = next((item for item in self.fibers if item.id == id), None)
-        if fiber is None:
-            raise KeyError(f"unknown Fiber id: {id}")
+        if not any(item is fiber for item in self.fibers):
+            raise ValueError("Fiber does not belong to this Context")
         if fiber.state is FiberState.DISPOSED:
             return
         if fiber.state in (FiberState.LOADING, FiberState.UNLOADING):
@@ -122,7 +121,7 @@ class Context:
         try:
             for fiber in reversed(self.fibers):
                 try:
-                    self.dispose_fiber(fiber.id)
+                    self.dispose_fiber(fiber)
                 except Exception as error:
                     if first_error is None:
                         first_error = error
@@ -174,6 +173,9 @@ class Context:
         self._transition(fiber, FiberState.ACTIVE)
 
     def _unload(self, fiber: Fiber, target: FiberState) -> None:
+        for name, owner in tuple(self._providers.items()):
+            if owner is fiber:
+                self._suspend_consumers(name)
         self._transition(fiber, FiberState.UNLOADING)
         try:
             self._cleanup(fiber)
@@ -210,6 +212,8 @@ class Context:
         del self._providers[name]
         del self._services[name]
         self.emit("service", f"{name}: removed")
+
+    def _suspend_consumers(self, name: str) -> None:
         for fiber in reversed(self.fibers):
             if (
                 fiber.state is FiberState.ACTIVE
