@@ -1,0 +1,9 @@
+[[plugins]]
+id = "headless_startup"
+module = "nano_dsh.plugins.headless_startup"
+inject = ["cmdline_args"]
+
+[[plugins]]
+id = "headless_runner"
+module = "nano_dsh.plugins.headless_runner"
+inject = ["headless_startup", "agents"]

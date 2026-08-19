@@ -1,0 +1,4 @@
+bundles = [
+  "../bundles/base.toml",
+  "../bundles/headless.toml",
+]

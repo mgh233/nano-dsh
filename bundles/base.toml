@@ -1,0 +1,40 @@
+[[plugins]]
+id = "sessions"
+module = "nano_dsh.plugins.sessions"
+inject = []
+
+[[plugins]]
+id = "agents"
+module = "nano_dsh.plugins.agents"
+inject = []
+
+[[plugins]]
+id = "tools"
+module = "nano_dsh.plugins.tools"
+inject = []
+
+[[plugins]]
+id = "bash"
+module = "nano_dsh.plugins.bash"
+inject = ["tools"]
+
+[[plugins]]
+id = "editor"
+module = "nano_dsh.plugins.editor"
+inject = ["tools"]
+
+[[plugins]]
+id = "deepseek"
+module = "nano_dsh.plugins.deepseek"
+inject = ["cmdline_args"]
+
+[plugins.config]
+model = "deepseek-v4-flash"
+thinking = "enabled"
+reasoning_effort = "high"
+stream = false
+
+[[plugins]]
+id = "agent_loop"
+module = "nano_dsh.plugins.agent_loop"
+inject = ["sessions", "agents", "tools", "llm"]
