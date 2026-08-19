@@ -46,7 +46,7 @@ Here is the same trace with concrete code locations.
 7. The Agent appends a user Session Event and sends Model Step 1 through [src/nano_dsh/plugins/deepseek.py](src/nano_dsh/plugins/deepseek.py). The model can return Tool Calls for `str_replace_editor` and `bash`.
 8. [src/nano_dsh/plugins/editor.py](src/nano_dsh/plugins/editor.py) or [src/nano_dsh/plugins/bash.py](src/nano_dsh/plugins/bash.py) executes each call. [src/nano_dsh/plugins/tools.py](src/nano_dsh/plugins/tools.py) converts an expected Tool Failure into a model-visible Tool Result. The Agent appends each result as a `ToolResultEvent`.
 9. The loop sends a later Model Step with the earlier assistant event and Tool Results. It repeats until the provider returns non-empty final text. That text goes to standard output.
-10. `main()` always calls `context.dispose()`. Fibers clean up in reverse creation order. Their Effects remove the AgentFactory, Tool registrations, and Fiber-owned Services.
+10. After `boot()` succeeds, `main()` calls `context.dispose()` from its `finally` block. If Boot or Plugin activation fails, `boot()` itself disposes the Context and re-raises. In either cleanup path, Fibers clean up in reverse creation order. Their Effects remove the AgentFactory, Tool registrations, and Fiber-owned Services.
 
 The trace is concise by design. It does not print the API key or Reasoning Content.
 
