@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nano_dsh.contracts import RunFailure, ToolFailure
+from nano_dsh.contracts import ToolOutput
 from nano_dsh.plugins import bash
 
 
@@ -25,8 +25,6 @@ class FakeContext:
         self.effect_used = False
 
     def get(self, name: str):
-        if name != "tools":
-            raise KeyError(name)
         return self.tools
 
     def effect(self, setup) -> None:
@@ -56,33 +54,36 @@ class BashToolTests(unittest.TestCase):
         )
         self.assertFalse(self.definition.parameters["additionalProperties"])
 
-    def test_nonempty_config_fails(self) -> None:
-        with self.assertRaises(RunFailure):
-            bash.apply(FakeContext(), {"timeout": 1})
+    def test_plugin_config_is_trusted_after_loading(self) -> None:
+        context = FakeContext()
+        bash.apply(context, {"timeout": 1})
+        self.assertEqual(context.tools.definition.name, "bash")
 
     def test_runs_in_workspace(self) -> None:
         result = self.handler({"command": "pwd"}, self.workspace)
-        self.assertEqual(Path(result.strip()).resolve(), self.workspace.resolve())
+        self.assertEqual(Path(result.content.strip()).resolve(), self.workspace.resolve())
 
     def test_merges_stdout_and_stderr(self) -> None:
         result = self.handler(
             {"command": "printf out; printf err >&2"},
             self.workspace,
         )
-        self.assertEqual(result, "outerr")
+        self.assertEqual(result.content, "outerr")
 
     def test_nonzero_exit_returns_output_and_marker(self) -> None:
         result = self.handler(
             {"command": "printf failed; exit 7"},
             self.workspace,
         )
-        self.assertIn("failed", result)
-        self.assertTrue(result.endswith("[exit code: 7]"))
+        self.assertTrue(result.failed)
+        self.assertIn("failed", result.content)
+        self.assertTrue(result.content.endswith("[exit code: 7]"))
 
-    def test_timeout_is_a_tool_failure(self) -> None:
-        with mock.patch.object(bash, "TIMEOUT_SECONDS", 0.01):
-            with self.assertRaisesRegex(ToolFailure, "timed out"):
-                self.handler({"command": "sleep 1"}, self.workspace)
+    def test_missing_or_non_string_command_returns_failure_output(self) -> None:
+        for arguments in ({}, {"command": 3}, {"command": "true", "extra": True}):
+            with self.subTest(arguments=arguments):
+                result = self.handler(arguments, self.workspace)
+                self.assertEqual(result, ToolOutput("Error: bash requires a string command", True))
 
     def test_secret_is_removed_from_child_environment(self) -> None:
         command = (
@@ -94,27 +95,15 @@ class BashToolTests(unittest.TestCase):
             {"DEEPSEEK_API_KEY": "must-not-leak"},
         ):
             result = self.handler({"command": command}, self.workspace)
-        self.assertEqual(result, "absent")
-
-    def test_invalid_arguments_fail_before_execution(self) -> None:
-        invalid = (
-            None,
-            {},
-            {"command": 3},
-            {"command": "true", "extra": True},
-        )
-        for arguments in invalid:
-            with self.subTest(arguments=arguments):
-                with self.assertRaises(ToolFailure):
-                    self.handler(arguments, self.workspace)
+        self.assertEqual(result.content, "absent")
 
     def test_output_is_truncated(self) -> None:
         result = self.handler(
             {"command": "printf 'x%.0s' {1..17000}"},
             self.workspace,
         )
-        self.assertEqual(len(result), 16_000)
-        self.assertEqual(set(result), {"x"})
+        self.assertEqual(len(result.content), 16_000)
+        self.assertEqual(set(result.content), {"x"})
 
 
 if __name__ == "__main__":

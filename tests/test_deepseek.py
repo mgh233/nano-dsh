@@ -3,16 +3,15 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-import urllib.error
 import urllib.request
 from pathlib import Path
 
 from nano_dsh.contracts import (
     AssistantEvent,
     CommandLineArgs,
-    RunFailure,
     ToolCall,
     ToolDefinition,
+    ToolOutput,
     ToolResultEvent,
     UserEvent,
 )
@@ -35,7 +34,7 @@ def _tool() -> ToolDefinition:
             "properties": {"query": {"type": "string"}},
             "required": ["query"],
         },
-        lambda *_: "",
+        lambda *_: ToolOutput(""),
     )
 
 
@@ -64,14 +63,12 @@ def _response(
 
 
 class RecordingTransport:
-    def __init__(self, response: bytes | Exception) -> None:
+    def __init__(self, response: bytes) -> None:
         self.response = response
         self.calls: list[urllib.request.Request] = []
 
     def __call__(self, request: urllib.request.Request) -> bytes:
         self.calls.append(request)
-        if isinstance(self.response, Exception):
-            raise self.response
         return self.response
 
 
@@ -247,100 +244,35 @@ class DeepSeekProviderTests(unittest.TestCase):
         self.assertEqual(output.reasoning_content, "thought")
         self.assertEqual(output.tool_calls, ())
 
-    def test_transport_failures_are_sanitized_without_retry(self) -> None:
-        errors = [
-            urllib.error.HTTPError(
-                "https://example.test",
-                401,
-                TEST_KEY,
-                {},
-                None,
-            ),
-            urllib.error.URLError(TEST_KEY),
-            RuntimeError(TEST_KEY),
-        ]
-        for error in errors:
-            with self.subTest(error=type(error).__name__):
-                transport = RecordingTransport(error)
-                provider = DeepSeekProvider(TEST_KEY, transport=transport)
-                with self.assertRaises(RunFailure) as caught:
-                    provider.complete([], [])
-                self.assertEqual(str(caught.exception), "DeepSeek request failed")
-                self.assertNotIn(TEST_KEY, str(caught.exception))
-                self.assertEqual(len(transport.calls), 1)
-
-    def test_json_and_response_shape_failures_are_sanitized(self) -> None:
-        invalid_responses = [
-            b"not-json",
-            b"[]",
-            b'{"error":{"message":"test-secret-key"}}',
-            b'{"choices":[]}',
-            b'{"choices":[{"message":[],"finish_reason":"stop"}]}',
-            b'{"choices":[{"message":{"content":"x"},"finish_reason":"stop"}]}',
-            b'{"choices":[{"message":{"content":7},"finish_reason":"stop"}]}',
-            b'{"choices":[{"message":{"role":"assistant","tool_calls":{}}}]}',
-            _response(
-                content=None,
-                tool_calls=[{"id": "bad"}],
-                finish_reason="tool_calls",
-            ),
-        ]
-        for response in invalid_responses:
-            with self.subTest(response=response[:40]):
+    def test_rejects_falsey_non_list_tool_calls(self) -> None:
+        for raw_calls in ("", {}, 0):
+            with self.subTest(raw_calls=raw_calls):
+                payload = json.loads(_response())
+                payload["choices"][0]["message"]["tool_calls"] = raw_calls
                 provider = DeepSeekProvider(
                     TEST_KEY,
-                    transport=RecordingTransport(response),
+                    transport=RecordingTransport(json.dumps(payload).encode()),
                 )
-                with self.assertRaises(RunFailure) as caught:
+
+                with self.assertRaises(AssertionError):
                     provider.complete([], [])
-                self.assertNotIn(TEST_KEY, str(caught.exception))
 
-    def test_finish_reason_is_required_and_matches_tool_calls(self) -> None:
-        missing = json.loads(_response(content=TEST_KEY))
-        del missing["choices"][0]["finish_reason"]
-        call = {
-            "id": "call-1",
-            "type": "function",
-            "function": {"name": "lookup", "arguments": "{}"},
-        }
-        invalid_responses = [
-            json.dumps(missing).encode(),
-            _response(content=TEST_KEY, finish_reason="length"),
-            _response(
-                content=TEST_KEY,
-                tool_calls=[call],
-                finish_reason="stop",
-            ),
-            _response(content=TEST_KEY, finish_reason="tool_calls"),
-        ]
-        for response in invalid_responses:
-            with self.subTest(response=response[:60]):
-                provider = DeepSeekProvider(
-                    TEST_KEY,
-                    transport=RecordingTransport(response),
-                )
-                with self.assertRaises(RunFailure) as caught:
-                    provider.complete([], [])
-                self.assertNotIn(TEST_KEY, str(caught.exception))
+    def test_typed_constructor_configuration_reaches_the_request(self) -> None:
+        transport = RecordingTransport(_response())
+        provider = DeepSeekProvider(
+            TEST_KEY,
+            model="deepseek-v4-pro",
+            thinking="disabled",
+            reasoning_effort="max",
+            transport=transport,
+        )
 
-    def test_constructor_does_not_accept_base_url(self) -> None:
-        with self.assertRaises(TypeError):
-            DeepSeekProvider(
-                TEST_KEY,
-                base_url="https://attacker.example",  # type: ignore[call-arg]
-            )
+        provider.complete([], [])
 
-    def test_invalid_constructor_configuration_fails(self) -> None:
-        cases = [
-            {"model": ""},
-            {"thinking": "sometimes"},
-            {"reasoning_effort": "medium"},
-            {"stream": True},
-        ]
-        for values in cases:
-            with self.subTest(values=values):
-                with self.assertRaises(RunFailure):
-                    DeepSeekProvider(TEST_KEY, **values)  # type: ignore[arg-type]
+        body = json.loads(transport.calls[0].data)
+        self.assertEqual(body["model"], "deepseek-v4-pro")
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertEqual(body["reasoning_effort"], "max")
 
 
 class DeepSeekPluginTests(unittest.TestCase):
@@ -353,36 +285,17 @@ class DeepSeekPluginTests(unittest.TestCase):
     def _args(self, path: Path | None = None) -> CommandLineArgs:
         return CommandLineArgs("task", self.root, path or self.key_file)
 
-    def test_missing_and_empty_key_files_fail(self) -> None:
-        for content in (None, "", " \n", "one\ntwo\n"):
-            with self.subTest(content=content):
-                key_file = self.root / f"key-{len(list(self.root.iterdir()))}"
-                if content is not None:
-                    key_file.write_text(content)
-                with self.assertRaises(RunFailure) as caught:
-                    apply(FakeContext(self._args(key_file)), {})
-                self.assertNotIn(TEST_KEY, str(caught.exception))
-
-    def test_invalid_plugin_config_fails(self) -> None:
+    def test_plugin_config_is_trusted_after_loading(self) -> None:
         self.key_file.write_text(TEST_KEY)
-        invalid = [
-            {"unknown": True},
-            {"stream": "false"},
-        ]
-        for config in invalid:
-            with self.subTest(config=config):
-                with self.assertRaises(RunFailure) as caught:
-                    apply(FakeContext(self._args()), config)
-                self.assertNotIn(TEST_KEY, str(caught.exception))
+        context = FakeContext(self._args())
+        apply(context, {"model": "deepseek-v4-pro", "thinking": "disabled"})
+        self.assertIsInstance(context.services["llm"], DeepSeekProvider)
 
-    def test_plugin_config_rejects_base_url(self) -> None:
+    def test_plugin_config_is_optional(self) -> None:
         self.key_file.write_text(TEST_KEY)
-        with self.assertRaises(RunFailure) as caught:
-            apply(
-                FakeContext(self._args()),
-                {"base_url": "https://attacker.example"},
-            )
-        self.assertNotIn(TEST_KEY, str(caught.exception))
+        context = FakeContext(self._args())
+        apply(context, {})
+        self.assertIsInstance(context.services["llm"], DeepSeekProvider)
 
     def test_apply_provides_fiber_owned_service_and_disposes_it(self) -> None:
         self.key_file.write_text(TEST_KEY + "\n")

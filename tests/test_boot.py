@@ -6,36 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from nano_dsh.boot import boot
-from nano_dsh.contracts import RunFailure
-
-
-class Fiber:
-    def __init__(self, fiber_id: str, state: str) -> None:
-        self.id = fiber_id
-        self.state = state
-
-
-class FakeContext:
-    def __init__(self, trace, fibers: list[Fiber]) -> None:
-        self.trace = trace
-        self.fibers = fibers
-        self.events: list[tuple[str, object]] = []
-        self.disposed = False
-
-    def provide_root(self, name: str, service: object) -> None:
-        self.events.append(("root", name))
-
-    def add_fiber(self, spec, apply) -> None:
-        self.events.append(("fiber", spec.id))
-
-    def missing(self, fiber: Fiber) -> tuple[str, ...]:
-        return ("agents",) if fiber.id == "consumer" else ()
-
-    def dispose(self) -> None:
-        self.disposed = True
-
-    def emit(self, category: str, detail: str) -> None:
-        self.events.append((category, detail))
+from nano_dsh.contracts import PluginSpec
+from nano_dsh.cordis import Context, FiberState
 
 
 class BootTests(unittest.TestCase):
@@ -48,40 +20,58 @@ class BootTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_provides_root_services_before_loading_plugins(self) -> None:
-        context = FakeContext(lambda *_: None, [Fiber("ready", "ACTIVE")])
+        context = Context()
+        first = object()
+        second = object()
+
         def load(_profile):
-            context.events.append(("load", "plugins"))
+            self.assertIs(context.get("first"), first)
+            self.assertIs(context.get("second"), second)
             return ()
 
         with patch("nano_dsh.boot.Loader.load", side_effect=load):
             result = boot(
                 self.profile,
-                {"first": object(), "second": object()},
+                {"first": first, "second": second},
                 lambda *_: None,
                 context_factory=lambda trace: context,
             )
 
         self.assertIs(result, context)
-        self.assertEqual(
-            context.events,
-            [("root", "first"), ("root", "second"), ("load", "plugins")],
-        )
 
     def test_audit_reports_pending_fiber_and_missing_services(self) -> None:
-        context = FakeContext(lambda *_: None, [Fiber("consumer", "PENDING")])
+        context = Context()
+        fiber = context.add_fiber(
+            PluginSpec("consumer", "test.consumer", ("agents",)),
+            lambda _context: self.fail("pending Consumer activated"),
+        )
         with patch("nano_dsh.boot.Loader.load", return_value=()):
-            with self.assertRaisesRegex(RunFailure, r"consumer.*agents"):
+            with self.assertRaisesRegex(
+                AssertionError,
+                r"consumer.*state=PENDING.*agents",
+            ):
                 boot(self.profile, {}, lambda *_: None, context_factory=lambda trace: context)
 
-        self.assertTrue(context.disposed)
+        self.assertIs(fiber.state, FiberState.PENDING)
 
-    def test_disposes_context_when_loading_fails(self) -> None:
-        context = FakeContext(lambda *_: None, [])
-        with patch("nano_dsh.boot.Loader.load", side_effect=RunFailure("bad profile")):
-            with self.assertRaisesRegex(RunFailure, "bad profile"):
+    def test_loading_failure_propagates_without_disposal(self) -> None:
+        context = Context()
+        cleanup: list[str] = []
+
+        def load(_profile):
+            context.add_fiber(
+                PluginSpec("plugin", "test.plugin"),
+                lambda runtime: runtime.effect(
+                    lambda: lambda: cleanup.append("plugin")
+                ),
+            )
+            assert False, "load failed"
+
+        with patch("nano_dsh.boot.Loader.load", side_effect=load):
+            with self.assertRaisesRegex(AssertionError, "load failed"):
                 boot(self.profile, {}, lambda *_: None, context_factory=lambda trace: context)
 
-        self.assertTrue(context.disposed)
+        self.assertEqual(cleanup, [])
 
 
 if __name__ == "__main__":

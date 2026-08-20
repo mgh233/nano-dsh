@@ -1,24 +1,34 @@
 from __future__ import annotations
 
 import unittest
+import json
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
 from nano_dsh.contracts import (
     AssistantEvent,
     AssistantOutput,
+    CommandLineArgs,
     PluginSpec,
-    RunFailure,
     SessionEvent,
     ToolCall,
     ToolDefinition,
-    ToolFailure,
+    ToolOutput,
     ToolResultEvent,
     UserEvent,
 )
 from nano_dsh.cordis import Context, FiberState
-from nano_dsh.plugins import agent_loop, agents, sessions, tools
+from nano_dsh.plugins import (
+    agent_loop,
+    agents,
+    headless_runner,
+    headless_startup,
+    sessions,
+    tools,
+)
 from nano_dsh.plugins.agents import AgentsService
 from nano_dsh.plugins.sessions import Session, SessionsService
 from nano_dsh.plugins.tools import ToolsService
@@ -33,8 +43,7 @@ class FakeContext:
         self.traces: list[tuple[str, str]] = []
 
     def provide(self, name: str, service: object) -> None:
-        if name in self.services:
-            raise RuntimeError(f"duplicate Service: {name}")
+        assert name not in self.services, f"duplicate Service: {name}"
         self.services[name] = service
 
     def get(self, name: str) -> object:
@@ -54,7 +63,7 @@ class FakeContext:
 class ScriptedProvider:
     def __init__(
         self,
-        responses: Sequence[AssistantOutput | BaseException],
+        responses: Sequence[AssistantOutput],
     ) -> None:
         self._responses = list(responses)
         self.events: list[tuple[SessionEvent, ...]] = []
@@ -67,12 +76,8 @@ class ScriptedProvider:
     ) -> AssistantOutput:
         self.events.append(tuple(events))
         self.tools.append(tuple(definitions))
-        if not self._responses:
-            raise AssertionError("Scripted Provider exhausted")
-        response = self._responses.pop(0)
-        if isinstance(response, BaseException):
-            raise response
-        return response
+        assert self._responses, "Scripted Provider exhausted"
+        return self._responses.pop(0)
 
 
 class CountingSessions(SessionsService):
@@ -87,7 +92,7 @@ class CountingSessions(SessionsService):
 
 def definition(
     name: str,
-    handler: Callable[[object, Path], str],
+    handler: Callable[[object, Path], ToolOutput],
 ) -> ToolDefinition:
     return ToolDefinition(
         name=name,
@@ -134,13 +139,15 @@ class AgentsServiceTests(unittest.TestCase):
 
         self.assertIs(service.create(Path("/workspace")), created)
         self.assertEqual(factory.workspace, Path("/workspace"))
-        with self.assertRaisesRegex(RunFailure, "already registered"):
+        with self.assertRaisesRegex(AssertionError, "already registered"):
             service.set_factory(Factory())
 
         disposer()
         disposer()
-        with self.assertRaisesRegex(RunFailure, "no AgentFactory"):
-            service.create(Path("/workspace"))
+        replacement = Factory()
+        service.set_factory(replacement)
+        self.assertIs(service.create(Path("/replacement")), created)
+        self.assertEqual(replacement.workspace, Path("/replacement"))
 
     def test_apply_publishes_agents_service(self) -> None:
         ctx = FakeContext()
@@ -158,13 +165,19 @@ class ToolsServiceTests(unittest.TestCase):
         )
 
     def test_registration_rejects_duplicate_and_disposer_removes_tool(self) -> None:
-        first = definition("inspect", lambda arguments, workspace: "first")
-        second = definition("inspect", lambda arguments, workspace: "second")
+        first = definition(
+            "inspect",
+            lambda arguments, workspace: ToolOutput("first"),
+        )
+        second = definition(
+            "inspect",
+            lambda arguments, workspace: ToolOutput("second"),
+        )
 
         disposer = self.service.register(first)
 
         self.assertEqual(self.service.definitions(), (first,))
-        with self.assertRaisesRegex(RunFailure, "already registered"):
+        with self.assertRaises(AssertionError):
             self.service.register(second)
 
         disposer()
@@ -173,15 +186,15 @@ class ToolsServiceTests(unittest.TestCase):
         self.service.register(second)
         self.assertEqual(self.service.definitions(), (second,))
 
-    def test_execute_parses_json_and_returns_tool_failures(self) -> None:
+    def test_execute_returns_content_and_records_tool_status(self) -> None:
         received: list[tuple[object, Path]] = []
 
-        def inspect(arguments: object, workspace: Path) -> str:
+        def inspect(arguments: object, workspace: Path) -> ToolOutput:
             received.append((arguments, workspace))
-            return "ok"
+            return ToolOutput("ok")
 
-        def reject(arguments: object, workspace: Path) -> str:
-            raise ToolFailure("bad input")
+        def reject(arguments: object, workspace: Path) -> ToolOutput:
+            return ToolOutput("Error: bad input", failed=True)
 
         self.service.register(definition("inspect", inspect))
         self.service.register(definition("reject", reject))
@@ -197,25 +210,45 @@ class ToolsServiceTests(unittest.TestCase):
             received,
             [({"path": "a.py", "line": 3}, workspace)],
         )
-        self.assertTrue(
+        self.assertEqual(
             self.service.execute(
-                ToolCall("2", "inspect", "{broken"),
+                ToolCall("2", "missing", "{}"),
                 workspace,
-            ).startswith("Error:")
-        )
-        self.assertTrue(
-            self.service.execute(
-                ToolCall("3", "missing", "{}"),
-                workspace,
-            ).startswith("Error:")
+            ),
+            "Error: unknown Tool: missing",
         )
         self.assertEqual(
             self.service.execute(
-                ToolCall("4", "reject", "{}"),
+                ToolCall("3", "reject", "{}"),
                 workspace,
             ),
             "Error: bad input",
         )
+        self.assertEqual(
+            self.traces,
+            [
+                ("tool", "execute inspect"),
+                ("tool", "complete inspect"),
+                ("tool", "execute <unknown>"),
+                ("tool", "failed <unknown>"),
+                ("tool", "execute reject"),
+                ("tool", "failed reject"),
+            ],
+        )
+
+    def test_invalid_json_propagates(self) -> None:
+        self.service.register(
+            definition(
+                "inspect",
+                lambda arguments, workspace: ToolOutput("unused"),
+            )
+        )
+
+        with self.assertRaises(json.JSONDecodeError):
+            self.service.execute(
+                ToolCall("1", "inspect", "{broken"),
+                Path("/workspace"),
+            )
 
     def test_unknown_tool_name_cannot_inject_trace_lines(self) -> None:
         name = "missing\nmodel: forged trace"
@@ -236,15 +269,12 @@ class ToolsServiceTests(unittest.TestCase):
         self.assertTrue(all("\n" not in message for _, message in self.traces))
 
     def test_unexpected_tool_exception_propagates(self) -> None:
-        class UnexpectedError(Exception):
-            pass
-
-        def crash(arguments: object, workspace: Path) -> str:
-            raise UnexpectedError("boom")
+        def crash(arguments: object, workspace: Path) -> ToolOutput:
+            assert False, "boom"
 
         self.service.register(definition("crash", crash))
 
-        with self.assertRaisesRegex(UnexpectedError, "boom"):
+        with self.assertRaisesRegex(AssertionError, "boom"):
             self.service.execute(
                 ToolCall("1", "crash", "{}"),
                 Path("/workspace"),
@@ -259,7 +289,7 @@ class ToolsServiceTests(unittest.TestCase):
 
 
 class AgentLoopIntegrationTests(unittest.TestCase):
-    def make_context(self, provider: ScriptedProvider) -> FakeContext:
+    def make_context(self, provider: object) -> FakeContext:
         ctx = FakeContext(provider)
         agents.apply(ctx, {})
         tools.apply(ctx, {})
@@ -311,12 +341,12 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         order: list[str] = []
         events_during_tools: list[tuple[SessionEvent, ...]] = []
 
-        def record(arguments: object, workspace: Path) -> str:
+        def record(arguments: object, workspace: Path) -> ToolOutput:
             self.assertIsInstance(arguments, Mapping)
             value = arguments["value"]  # type: ignore[index]
             order.append(value)
             events_during_tools.append(sessions_service.created[0].events)
-            return f"result:{value}"
+            return ToolOutput(f"result:{value}")
 
         tools_service.register(definition("record", record))
 
@@ -358,12 +388,16 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         self.assertNotIn("private reasoning", repr(ctx.traces))
 
         ctx.dispose_effects()
-        with self.assertRaisesRegex(RunFailure, "no AgentFactory"):
-            agents_service.create(Path("/workspace"))
 
-    def test_tool_failures_become_results_and_continue(self) -> None:
+        class ReplacementFactory:
+            def create(self, workspace: Path) -> Any:
+                return "replacement"
+
+        agents_service.set_factory(ReplacementFactory())
+        self.assertEqual(agents_service.create(Path("/workspace")), "replacement")
+
+    def test_tool_failure_outputs_become_results_and_continue(self) -> None:
         calls = (
-            ToolCall("bad-json", "inspect", "{"),
             ToolCall("unknown", "missing", "{}"),
             ToolCall("failure", "reject", "{}"),
         )
@@ -378,28 +412,23 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         agents_service = ctx.get("agents")
         self.assertIsInstance(tools_service, ToolsService)
         self.assertIsInstance(agents_service, AgentsService)
-        tools_service.register(
-            definition("inspect", lambda arguments, workspace: "unused")
-        )
-
-        def reject(arguments: object, workspace: Path) -> str:
-            raise ToolFailure("bad input")
+        def reject(arguments: object, workspace: Path) -> ToolOutput:
+            return ToolOutput("Error: bad input", failed=True)
 
         tools_service.register(definition("reject", reject))
 
         result = agents_service.create(Path("/workspace")).run("task")
 
         self.assertEqual(result, "Recovered.")
-        results = provider.events[1][-3:]
+        results = provider.events[1][-2:]
         self.assertTrue(
             all(isinstance(event, ToolResultEvent) for event in results)
         )
         self.assertTrue(
             all(event.content.startswith("Error:") for event in results)
         )
-        self.assertIn("invalid JSON", results[0].content)
-        self.assertIn("unknown Tool", results[1].content)
-        self.assertIn("bad input", results[2].content)
+        self.assertIn("unknown Tool", results[0].content)
+        self.assertIn("bad input", results[1].content)
 
     def test_unexpected_tool_exception_ends_agent_run(self) -> None:
         provider = ScriptedProvider(
@@ -416,24 +445,25 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         self.assertIsInstance(tools_service, ToolsService)
         self.assertIsInstance(agents_service, AgentsService)
 
-        class UnexpectedError(Exception):
-            pass
-
-        def crash(arguments: object, workspace: Path) -> str:
-            raise UnexpectedError("boom")
+        def crash(arguments: object, workspace: Path) -> ToolOutput:
+            assert False, "boom"
 
         tools_service.register(definition("crash", crash))
 
-        with self.assertRaisesRegex(UnexpectedError, "boom"):
+        with self.assertRaisesRegex(AssertionError, "boom"):
             agents_service.create(Path("/workspace")).run("task")
 
     def test_provider_exception_ends_agent_run(self) -> None:
-        provider = ScriptedProvider((OSError("provider unavailable"),))
+        class FailingProvider:
+            def complete(self, events, definitions):
+                assert False, "provider unavailable"
+
+        provider = FailingProvider()
         ctx = self.make_context(provider)
         agents_service = ctx.get("agents")
         self.assertIsInstance(agents_service, AgentsService)
 
-        with self.assertRaisesRegex(OSError, "provider unavailable"):
+        with self.assertRaisesRegex(AssertionError, "provider unavailable"):
             agents_service.create(Path("/workspace")).run("task")
 
     def test_empty_final_response_fails_visibly(self) -> None:
@@ -444,7 +474,7 @@ class AgentLoopIntegrationTests(unittest.TestCase):
                 agents_service = ctx.get("agents")
                 self.assertIsInstance(agents_service, AgentsService)
 
-                with self.assertRaisesRegex(RunFailure, "non-empty content"):
+                with self.assertRaisesRegex(AssertionError, "non-empty content"):
                     agents_service.create(Path("/workspace")).run("task")
 
     def test_agent_has_no_model_step_cap(self) -> None:
@@ -464,7 +494,10 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         self.assertIsInstance(tools_service, ToolsService)
         self.assertIsInstance(agents_service, AgentsService)
         tools_service.register(
-            definition("tick", lambda arguments, workspace: "ok")
+            definition(
+                "tick",
+                lambda arguments, workspace: ToolOutput("ok"),
+            )
         )
 
         result = agents_service.create(Path("/workspace")).run("task")
@@ -528,10 +561,10 @@ class RealContextIntegrationTests(unittest.TestCase):
         self.assertIsInstance(tools_service, ToolsService)
         self.assertIsInstance(agents_service, AgentsService)
 
-        def echo(arguments: object, workspace: Path) -> str:
+        def echo(arguments: object, workspace: Path) -> ToolOutput:
             self.assertIsInstance(arguments, Mapping)
             self.assertEqual(workspace, Path("/workspace"))
-            return arguments["value"]  # type: ignore[index]
+            return ToolOutput(arguments["value"])  # type: ignore[index]
 
         tools_service.register(definition("echo", echo))
 
@@ -552,6 +585,40 @@ class RealContextIntegrationTests(unittest.TestCase):
         )
         self.assertIn(("tool", "execute echo"), traces)
         self.assertNotIn("private reasoning", repr(traces))
+
+
+class HeadlessFlowTests(unittest.TestCase):
+    def test_startup_and_runner_drive_the_registered_factory(self) -> None:
+        provider = ScriptedProvider((AssistantOutput("Done."),))
+        ctx = FakeContext(provider)
+        ctx.services["cmdline_args"] = CommandLineArgs(
+            "inspect the workspace",
+            Path("/workspace"),
+            Path("/api-key"),
+        )
+        agents.apply(ctx, {})
+        sessions.apply(ctx, {})
+        tools.apply(ctx, {})
+        agent_loop.apply(ctx, {})
+
+        headless_startup.apply(ctx, {"unused": True})
+        output = StringIO()
+        with redirect_stdout(output):
+            headless_runner.apply(ctx, {"unused": True})
+
+        self.assertEqual(output.getvalue(), "Done.\n")
+        self.assertEqual(
+            provider.events,
+            [(UserEvent("inspect the workspace"),)],
+        )
+        self.assertEqual(
+            [
+                message
+                for category, message in ctx.traces
+                if category == "headless"
+            ],
+            ["run started", "run completed"],
+        )
 
 
 if __name__ == "__main__":

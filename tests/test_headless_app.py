@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from nano_dsh.__main__ import _parse_args, main
-from nano_dsh.contracts import CommandLineArgs, PluginSpec, RunFailure
+from nano_dsh.contracts import CommandLineArgs, PluginSpec
 from nano_dsh.cordis import Context
 from nano_dsh.loader import read_bundle, read_profile
 from nano_dsh.plugins import headless_runner, headless_startup
@@ -126,7 +126,7 @@ class HeadlessAppTests(unittest.TestCase):
         self.assertIn("headless: run started", trace)
         self.assertIn("headless: run completed", trace)
         self.assertEqual(sum(line.endswith("-> ACTIVE") for line in trace), 9)
-        self.assertEqual(sum(line.endswith("-> DISPOSED") for line in trace), 9)
+        self.assertEqual(sum(line.endswith("ACTIVE -> PENDING") for line in trace), 9)
         self.assertNotIn(TEST_KEY, stderr.getvalue())
         self.assertNotIn(REASONING, stderr.getvalue())
 
@@ -219,7 +219,7 @@ class HeadlessAppTests(unittest.TestCase):
                 _parse_args([])
         self.assertEqual(raised.exception.code, 2)
 
-    def test_startup_requires_empty_config_and_valid_args(self) -> None:
+    def test_startup_publishes_headless_startup(self) -> None:
         args = CommandLineArgs("task", self.workspace, self.key_file)
         context = Context()
         context.provide_root("cmdline_args", args)
@@ -236,20 +236,6 @@ class HeadlessAppTests(unittest.TestCase):
             self.workspace,
         )
         context.dispose()
-
-        with self.assertRaisesRegex(RunFailure, "config must be empty"):
-            headless_startup.apply(object(), {"extra": True})
-        with self.assertRaisesRegex(RunFailure, "validated CommandLineArgs"):
-            invalid = Context()
-            invalid.provide_root("cmdline_args", object())
-            invalid.add_fiber(
-                PluginSpec("invalid", "startup", ("cmdline_args",)),
-                lambda ctx: headless_startup.apply(ctx, {}),
-            )
-
-    def test_runner_requires_empty_config(self) -> None:
-        with self.assertRaisesRegex(RunFailure, "config must be empty"):
-            headless_runner.apply(object(), {"extra": True})
 
 
 if __name__ == "__main__":

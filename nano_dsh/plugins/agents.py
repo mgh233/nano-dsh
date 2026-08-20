@@ -2,9 +2,9 @@
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from nano_dsh.contracts import Agent, AgentFactory, Disposer, RunFailure
+from nano_dsh.contracts import Agent, AgentFactory, Disposer
 
 
 class AgentsService:
@@ -15,8 +15,7 @@ class AgentsService:
 
     def set_factory(self, factory: AgentFactory) -> Disposer:
         # Register the current factory and return its disposer.
-        if self._factory is not None:
-            raise RunFailure("an AgentFactory is already registered")
+        assert self._factory is None, "an AgentFactory is already registered"
         self._factory = factory
 
         def dispose() -> None:
@@ -27,9 +26,7 @@ class AgentsService:
 
     def create(self, workspace: Path) -> Agent:
         # Create an Agent through the current factory.
-        if self._factory is None:
-            raise RunFailure("no AgentFactory is registered")
-        return self._factory.create(workspace)
+        return cast(AgentFactory, self._factory).create(workspace)
 
 
 def apply(ctx: Any, config: Mapping[str, object]) -> None:

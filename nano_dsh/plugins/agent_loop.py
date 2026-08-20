@@ -9,7 +9,6 @@ from nano_dsh.contracts import (
     Agent,
     AssistantEvent,
     LLMProvider,
-    RunFailure,
     ToolResultEvent,
     Trace,
     UserEvent,
@@ -73,8 +72,9 @@ class _Agent:
                         )
                     )
                 continue
-            if output.content is None or not output.content.strip():
-                raise RunFailure("final assistant response must contain non-empty content")
+            assert output.content is not None and output.content.strip(), (
+                "final assistant response must contain non-empty content"
+            )
             self._trace("agent", "run completed")
             return output.content
 

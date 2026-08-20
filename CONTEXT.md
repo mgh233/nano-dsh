@@ -55,15 +55,15 @@ _Avoid_: Tool use, command
 The value produced by a Tool Execution and returned to a later Model Step.
 _Avoid_: Tool response, observation
 
-**Tool Failure**:
-An expected unsuccessful Tool Execution represented as a Tool Result so the
-Agent can inspect it and try a different action.
-_Avoid_: Runtime error, exception
+**Failed Tool Output**:
+A predictable unsuccessful Tool Execution represented by
+`ToolOutput(content, failed=True)`. Its content becomes a Tool Result.
+_Avoid_: Exception wrapper
 
-**Run Failure**:
-An unrecoverable failure in application assembly, Plugin activation, Provider
-communication, or a runtime invariant that ends the Agent Run.
-_Avoid_: Tool Failure, degraded result
+**Native Python Failure**:
+An unexpected JSON, network, filesystem, encoding, timeout, or runtime error
+that propagates with its original traceback.
+_Avoid_: Result wrapper, fallback
 
 **Tool**:
 A named operation that an Agent can request through a Tool Call.
@@ -185,9 +185,8 @@ state, lifecycle state, and owned Effects.
 _Avoid_: Plugin, task
 
 **Fiber State**:
-One of `PENDING`, `LOADING`, `ACTIVE`, `UNLOADING`, `FAILED`, or `DISPOSED`.
-It states where a Fiber is in dependency waiting, activation, cleanup, failure,
-or permanent disposal.
+One of `PENDING`, `LOADING`, or `ACTIVE`. It states whether a Fiber is waiting,
+activating, or active.
 _Avoid_: Plugin status, Agent state
 
 **Effect**:

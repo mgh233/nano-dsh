@@ -3,7 +3,8 @@
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from .contracts import RunFailure, Trace
+from .contracts import Trace
+from .cordis import Context, FiberState
 from .loader import Loader
 
 
@@ -11,34 +12,23 @@ def boot(
     profile_path: Path,
     root_services: Mapping[str, object],
     trace: Trace,
-    context_factory: Callable[[Trace], object] | None = None,
-) -> object:
+    context_factory: Callable[[Trace], Context] | None = None,
+) -> Context:
     # Create, assemble, audit, and return an active Context.
     if context_factory is None:
-        from .cordis import Context
-
         context_factory = Context
     context = context_factory(trace)
-    try:
-        for name, service in root_services.items():
-            context.provide_root(name, service)  # type: ignore[attr-defined]
-        Loader(context).load(Path(profile_path))
-        _require_active(context)
-        return context
-    except Exception:
-        context.dispose()  # type: ignore[attr-defined]
-        raise
+    for name, service in root_services.items():
+        context.provide_root(name, service)
+    Loader(context).load(Path(profile_path))
+    _require_active(context)
+    return context
 
 
-def _require_active(context: object) -> None:
-    for fiber in context.fibers:  # type: ignore[attr-defined]
-        state = getattr(fiber.state, "name", fiber.state)
-        if state == "ACTIVE":
-            continue
-        fiber_id = getattr(fiber, "id", None)
-        if fiber_id is None:
-            fiber_id = getattr(getattr(fiber, "spec", None), "id", "unknown")
-        if state == "PENDING":
-            missing = ", ".join(context.missing(fiber))  # type: ignore[attr-defined]
-            raise RunFailure(f"Plugin Fiber {fiber_id} is PENDING; missing Services: {missing}")
-        raise RunFailure(f"Plugin Fiber {fiber_id} is {state}; expected ACTIVE")
+def _require_active(context: Context) -> None:
+    for fiber in context.fibers:
+        missing = ", ".join(context.missing(fiber))
+        assert fiber.state is FiberState.ACTIVE, (
+            f"Plugin Fiber {fiber.id} did not activate; "
+            f"state={fiber.state.name}; missing Services: {missing}"
+        )
