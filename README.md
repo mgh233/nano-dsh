@@ -55,13 +55,13 @@ Here is the same trace with concrete code locations.
 3. The Profile lists [bundles/base.toml](bundles/base.toml) and [bundles/headless.toml](bundles/headless.toml). [nano_dsh/loader.py](nano_dsh/loader.py) reads them in that order and imports each Plugin module.
 4. The Context creates one Fiber per Plugin. Each Fiber first emits `PENDING`. A Fiber becomes `ACTIVE` only after every required Service is available. The normal order is `sessions`, `agents`, `tools`, `bash`, `editor`, `deepseek`, `agent_loop`, `headless_startup`, and `headless_runner`.
 5. `deepseek` reads the one-line key file and provides `llm`. Once `sessions`, `agents`, `tools`, and `llm` exist, [nano_dsh/plugins/agent_loop.py](nano_dsh/plugins/agent_loop.py) activates. It registers an `AgentFactory`; it does not yet create an Agent.
-6. [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py) is the Driver. It calls `agents.create(workspace).run(task)`. The factory creates a new in-memory Session.
+6. [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py) is the Driver. It starts the Execution Trace with `llm.system_prompt` and the User Task. It then calls `agents.create(workspace).run(task)`. The factory creates a new in-memory Session.
 7. The Agent appends a user Session Event and sends Model Step 1 through [nano_dsh/plugins/deepseek.py](nano_dsh/plugins/deepseek.py). The model can return Tool Calls for `str_replace_editor` and `bash`.
 8. [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py) or [nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py) executes each call. A predictable rejection returns `ToolOutput(content, failed=True)`. `ToolsService` traces it as failed and returns its content to the model through a `ToolResultEvent`.
 9. The loop sends a later Model Step with the earlier assistant event and Tool Results. It stops when a Model Step has no Tool Calls. It requires and returns non-empty final content.
 10. After `boot()` succeeds, `main()` calls `context.dispose()`. Normal cleanup visits Fibers and Effects in reverse order. An unexpected Boot, Plugin, cleanup, JSON, network, filesystem, encoding, or subprocess timeout error propagates directly with its native Python traceback.
 
-The trace is concise by design. It does not print the API key or Reasoning Content.
+The Execution Trace starts with the System Prompt. It then prints the User Task, Reasoning Content, assistant content, Tool Calls, Tool Results, and runtime events. The tracing layer does not record the Provider API key or HTTP headers. Tool output is printed verbatim.
 
 ## 2. Minimal vocabulary
 
@@ -89,7 +89,7 @@ Read one layer at a time. Each layer answers a different question.
 
 - Files: [nano_dsh/__main__.py](nano_dsh/__main__.py), [nano_dsh/plugins/headless_startup.py](nano_dsh/plugins/headless_startup.py), and [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py).
 - Input: command-line task, Workspace path, and API-key-file path.
-- Output: final assistant text on standard output and a concise Execution Trace on standard error.
+- Output: final assistant text on standard output and a complete Execution Trace on standard error.
 - Why it exists: this layer validates user-facing input and starts exactly one headless Agent Run. The Runner is a Driver. It starts the Agent only after assembly supplies its required Services.
 
 ### 2. Boot and Bundle composition
@@ -172,18 +172,33 @@ Run it with:
 python examples/example.py --api-key-file .key
 ```
 
-A successful run prints:
+A successful scenario starts with:
 
 ```text
+=== SYSTEM ===
+You are a coding agent. ...
+=== USER ===
+Correct the inventory availability calculation. ...
+=== REASONING ===
+...
+=== TOOL CALL ===
+...
+=== TOOL RESULT ===
+...
+=== ASSISTANT ===
+...
 logic-bug: PASS
-boundary-bug: PASS
-missing-implementation: PASS
-Summary: 3/3 PASS
+```
+
+The same sequence repeats for all three fixtures. The final line is `Summary: 3/3 PASS`. Pipe standard output through `tee` to save the complete transcript:
+
+```bash
+python examples/example.py --api-key-file .key | tee example-output.log
 ```
 
 The script performs one attempt per fixture. It does not retry automatically.
 
-Verification record (2026-08-20): this revision passed the offline suite 83/83 and the real-API Live Acceptance suite 3/3. Production Python contains 761 non-empty, non-comment lines. The largest production file contains 140 such lines. The repository contains 34 Python files with zero AST `Raise`, `Try`, and `TryStar` nodes.
+Verification record (2026-08-20): this revision passed the offline suite 84/84 and the real-API Live Acceptance suite 3/3. Production Python contains 812 non-empty, non-comment lines. The largest production file contains 148 such lines. The repository contains 34 Python files with zero AST `Raise`, `Try`, and `TryStar` nodes.
 
 ## 6. Security boundary and failure behavior
 
@@ -191,12 +206,13 @@ Verification record (2026-08-20): this revision passed the offline suite 83/83 a
 - Every Bash Tool Execution starts a fresh `/bin/bash` process. Shell state does not persist. It has a 300-second timeout and a 16,000-character model-visible output limit.
 - `str_replace_editor` accepts only absolute paths. It resolves paths and rejects targets outside the Workspace, including symbolic-link escapes. This path confinement does not sandbox Bash.
 - `.key` is ignored by Git. The Provider reads one non-empty line into memory. The Bash child environment removes `DEEPSEEK_API_KEY`.
+- The Execution Trace includes Reasoning Content, Tool arguments, Tool Results, commands, and model-visible Workspace content. The tracing layer does not record the Provider API key or HTTP headers. A Tool can still expose any secret it reads.
 - There is no automatic retry for provider requests or the live suite. There is no Model Step cap.
 - Internal invariants use concise `assert` statements. Examples include unique Service Providers, one AgentFactory, the DeepSeek response shape, and non-empty final assistant content.
 - Predictable Tool failures return `ToolOutput(content, failed=True)`. Examples include an unknown Tool, a nonzero Bash exit, and a rejected Editor operation. `ToolsService` writes the content back to the model and records a failed trace.
 - JSON, network, filesystem, encoding, and subprocess timeout errors are not wrapped. Python exposes the original traceback.
 
-Use a disposable Workspace for live runs. Do not put secrets or important host files where a trusted Bash process can reach them.
+Use a disposable Workspace for live runs. Do not put secrets or important host files where Bash or the Execution Trace can expose them.
 
 ## 7. Deliberately not implemented
 

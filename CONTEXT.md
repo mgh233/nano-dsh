@@ -28,9 +28,10 @@ implementation Bug Fixtures.
 _Avoid_: Unit tests, integration tests
 
 **Execution Trace**:
-A concise user-visible sequence of Fiber, Service, Model Step, Tool, and Agent
-events that explains one Agent Run without exposing secrets or Reasoning
-Content.
+A user-visible transcript that starts with the System Prompt. It includes the
+User Task, Reasoning Content, assistant content, Tool Calls, Tool Results, and
+runtime events. The tracing layer does not record the Provider API key or HTTP
+headers. Tool output is printed verbatim, so a Tool can expose a secret it reads.
 _Avoid_: Debug log, HTTP trace
 
 **Model Step**:
@@ -135,8 +136,9 @@ start.
 _Avoid_: Command arguments, Runner configuration
 
 **Headless Runner**:
-The Driver that creates an Agent after the Headless Startup Service and Agents
-Service become available.
+The Driver that starts the Execution Trace from the LLM Provider's System
+Prompt, then creates an Agent after the Headless Startup, Agents, and LLM
+Services become available.
 _Avoid_: AgentLoop, CLI
 
 **Semantic Fidelity**:
