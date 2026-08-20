@@ -19,11 +19,6 @@ def _send(request: urllib.request.Request) -> bytes:
         return response.read()
 
 
-def _require(condition: object, message: str) -> None:
-    if not condition:
-        raise c.RunFailure(f"DeepSeek {message}")
-
-
 class DeepSeekProvider:
     def __init__(
         self,
@@ -36,11 +31,11 @@ class DeepSeekProvider:
         transport: Transport | None = None,
         trace: c.Trace | None = None,
     ) -> None:
-        _require(isinstance(api_key, str) and api_key.strip(), "API key must be non-empty")
-        _require(isinstance(model, str) and model.strip(), "model must be a non-empty string")
-        _require(thinking in ("enabled", "disabled"), "thinking must be enabled or disabled")
-        _require(reasoning_effort in ("high", "max"), "reasoning_effort must be high or max")
-        _require(stream is False, "stream must be false")
+        assert isinstance(api_key, str) and api_key.strip()
+        assert isinstance(model, str) and model.strip()
+        assert thinking in ("enabled", "disabled")
+        assert reasoning_effort in ("high", "max")
+        assert stream is False
         self._api_key = api_key
         self._model = model
         self._thinking = thinking
@@ -62,25 +57,14 @@ class DeepSeekProvider:
             "reasoning_effort": self._reasoning_effort,
             "stream": False,
         }
-        try:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        except (TypeError, ValueError):
-            raise c.RunFailure("DeepSeek request serialization failed") from None
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {"Authorization": f"Bearer {self._api_key}",
                    "Content-Type": "application/json"}
         self._emit("request")
-        try:
-            request = urllib.request.Request(_ENDPOINT, body, headers, method="POST")
-            raw = self._transport(request)
-        except Exception:
-            raise c.RunFailure("DeepSeek request failed") from None
+        request = urllib.request.Request(_ENDPOINT, body, headers, method="POST")
+        raw = self._transport(request)
         self._emit("response")
-        try:
-            if not isinstance(raw, bytes):
-                raise TypeError
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
-            raise c.RunFailure("DeepSeek response is not valid JSON") from None
+        payload = json.loads(raw.decode("utf-8"))
         return _assistant_output(payload)
 
     def _emit(self, phase: str) -> None:
@@ -106,7 +90,7 @@ def _messages(events: Sequence[c.SessionEvent]) -> list[dict[str, Any]]:
                 "tool_call_id": event.tool_call_id,
             })
         else:
-            raise c.RunFailure("Unsupported Session Event")
+            assert False
     return messages
 
 
@@ -122,81 +106,46 @@ def _tool_definition(tool: c.ToolDefinition) -> dict[str, Any]:
 
 
 def _assistant_output(payload: object) -> c.AssistantOutput:
-    if not isinstance(payload, dict):
-        raise c.RunFailure("DeepSeek response has an invalid shape")
-    if "error" in payload:
-        raise c.RunFailure("DeepSeek API returned an error")
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or len(choices) != 1:
-        raise c.RunFailure("DeepSeek response has an invalid shape")
+    assert isinstance(payload, dict)
+    assert "error" not in payload
+    choices = payload["choices"]
+    assert isinstance(choices, list) and len(choices) == 1
     choice = choices[0]
-    if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
-        raise c.RunFailure("DeepSeek response has an invalid shape")
+    assert isinstance(choice, dict)
     message = choice["message"]
-    if message.get("role") != "assistant":
-        raise c.RunFailure("DeepSeek response has an invalid shape")
-    content = _optional_text(message, "content")
-    reasoning = _optional_text(message, "reasoning_content")
+    assert isinstance(message, dict) and message.get("role") == "assistant"
+    content = message.get("content")
+    reasoning = message.get("reasoning_content")
+    assert content is None or isinstance(content, str)
+    assert reasoning is None or isinstance(reasoning, str)
     raw_calls = message.get("tool_calls")
-    if raw_calls is None:
-        raw_calls = []
-    elif not isinstance(raw_calls, list):
-        raise c.RunFailure("DeepSeek response has an invalid shape")
-    calls = tuple(_parse_tool_call(call) for call in raw_calls)
-    if "finish_reason" not in choice:
-        raise c.RunFailure("DeepSeek response has no finish_reason")
-    expected = "tool_calls" if calls else "stop"
-    if choice["finish_reason"] != expected:
-        raise c.RunFailure("DeepSeek response did not finish normally")
+    assert raw_calls is None or isinstance(raw_calls, list)
+    calls = tuple(_parse_tool_call(call) for call in raw_calls or ())
+    assert choice["finish_reason"] == ("tool_calls" if calls else "stop")
     return c.AssistantOutput(content, reasoning, calls)
 
 
-def _optional_text(message: Mapping[str, object], name: str) -> str | None:
-    value = message.get(name)
-    if value is not None and not isinstance(value, str):
-        raise c.RunFailure("DeepSeek response has an invalid shape")
-    return value
-
-
 def _parse_tool_call(value: object) -> c.ToolCall:
-    if not isinstance(value, dict) or value.get("type") != "function":
-        raise c.RunFailure("DeepSeek response has an invalid Tool Call")
+    assert isinstance(value, dict) and value.get("type") == "function"
     function = value.get("function")
-    if not isinstance(function, dict):
-        raise c.RunFailure("DeepSeek response has an invalid Tool Call")
+    assert isinstance(function, dict)
     call_id = value.get("id")
     name = function.get("name")
     arguments = function.get("arguments")
-    if not (
-        isinstance(call_id, str) and call_id
-        and isinstance(name, str) and name
-        and isinstance(arguments, str)
-    ):
-        raise c.RunFailure("DeepSeek response has an invalid Tool Call")
+    assert isinstance(call_id, str) and call_id
+    assert isinstance(name, str) and name
+    assert isinstance(arguments, str)
     return c.ToolCall(call_id, name, arguments)
 
 
 def _read_api_key(path: Path) -> str:
-    if not isinstance(path, Path):
-        raise c.RunFailure("DeepSeek API key file path must be a Path")
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError):
-        raise c.RunFailure("DeepSeek API key file cannot be read") from None
-    if len(lines) != 1 or not lines[0].strip():
-        raise c.RunFailure("DeepSeek API key file must contain one non-empty line")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1 and lines[0].strip()
     return lines[0]
 
 
 def apply(ctx: Any, config: Mapping[str, object]) -> None:
-    if not isinstance(config, Mapping):
-        raise c.RunFailure("DeepSeek Plugin config must be a mapping")
-    allowed = {"model", "thinking", "reasoning_effort", "stream"}
-    if not set(config).issubset(allowed):
-        raise c.RunFailure("DeepSeek Plugin config has unknown fields")
-    args = ctx.get("cmdline_args")
-    if not isinstance(args, c.CommandLineArgs):
-        raise c.RunFailure("cmdline_args must be CommandLineArgs")
+    args: c.CommandLineArgs = ctx.get("cmdline_args")
     provider = DeepSeekProvider(
         _read_api_key(args.api_key_file),
         model=config.get("model", "deepseek-v4-flash"),

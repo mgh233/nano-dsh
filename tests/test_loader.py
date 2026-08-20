@@ -6,9 +6,8 @@ import types
 import unittest
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
 
-from nano_dsh.contracts import PluginSpec, RunFailure
+from nano_dsh.contracts import PluginSpec
 from nano_dsh.loader import Loader, read_bundle, read_profile
 
 
@@ -78,15 +77,6 @@ class LoaderTests(unittest.TestCase):
 
         self.assertEqual(result.bundles, ((self.root / "bundles/base.toml").resolve(),))
 
-    def test_profile_reports_first_bundle_resolution_error(self) -> None:
-        profile = self.write("profiles/main.toml", 'bundles = ["loop", 1]')
-        (profile.parent / "loop").symlink_to("loop")
-
-        with self.assertRaises(RuntimeError) as caught:
-            read_profile(profile)
-        self.assertIs(type(caught.exception), RuntimeError)
-        self.assertNotIsInstance(caught.exception, RunFailure)
-
     def test_consumer_before_provider_is_not_sorted(self) -> None:
         self.module("test_loader_consumer")
         self.module("test_loader_provider")
@@ -97,64 +87,6 @@ class LoaderTests(unittest.TestCase):
         Loader(context).load(profile)
 
         self.assertEqual([spec.id for spec, _ in context.calls], ["consumer", "provider"])
-
-    def test_rejects_invalid_profile_and_bundle_values(self) -> None:
-        cases = [
-            ("profile.toml", 'bundles = "bundle.toml"', read_profile),
-            ("profile.toml", 'bundles = [1]', read_profile),
-            ("bundle.toml", 'plugins = "not-a-list"', read_bundle),
-            ("bundle.toml", 'plugins = ["not-a-table"]', read_bundle),
-            ("bundle.toml", '[[plugins]]\nid = ""\nmodule = "mod"', read_bundle),
-            ("bundle.toml", '[[plugins]]\nid = 1\nmodule = "mod"', read_bundle),
-            ("bundle.toml", '[[plugins]]\nid = "x"\nmodule = ""', read_bundle),
-            ("bundle.toml", '[[plugins]]\nid = "x"\nmodule = 1', read_bundle),
-            ("bundle.toml", '[[plugins]]\nid = "x"\nmodule = "mod"\ninject = [1]', read_bundle),
-            ("bundle.toml", '[[plugins]]\nid = "x"\nmodule = "mod"\nconfig = "bad"', read_bundle),
-        ]
-        for relative, content, reader in cases:
-            with self.subTest(content=content):
-                path = self.write(relative, content)
-                with self.assertRaises(RunFailure):
-                    reader(path)
-
-    def test_reports_first_invalid_plugin_entry(self) -> None:
-        path = self.write(
-            "mixed-invalid-bundle.toml",
-            'plugins = [{ id = "", module = "mod" }, "not-a-table"]',
-        )
-
-        with self.assertRaisesRegex(RunFailure, "empty Plugin id"):
-            read_bundle(path)
-
-    def test_rejects_missing_files_duplicate_ids_and_invalid_apply(self) -> None:
-        with self.assertRaises(RunFailure):
-            read_profile(self.root / "missing.toml")
-        missing_bundle = self.write("missing-bundle.toml", 'bundles = ["not-here.toml"]')
-        with self.assertRaises(RunFailure):
-            Loader(FakeContext()).load(missing_bundle)
-        self.module("test_loader_good")
-        profile = self.write("profile.toml", 'bundles = ["bundle.toml"]')
-        self.write("bundle.toml", '[[plugins]]\nid = "same"\nmodule = "test_loader_good"\n\n[[plugins]]\nid = "same"\nmodule = "test_loader_good"')
-        with self.assertRaises(RunFailure):
-            Loader(FakeContext()).load(profile)
-        self.write("bundle.toml", '[[plugins]]\nid = "bad"\nmodule = "test_loader_bad"')
-        sys.modules["test_loader_bad"] = types.ModuleType("test_loader_bad")
-        self.modules.append("test_loader_bad")
-        with self.assertRaises(RunFailure):
-            Loader(FakeContext()).load(profile)
-
-    def test_rejects_malformed_toml(self) -> None:
-        path = self.write("profile.toml", "bundles = [")
-        with self.assertRaises(RunFailure):
-            read_profile(path)
-
-    def test_rejects_missing_module(self) -> None:
-        profile = self.write("profile.toml", 'bundles = ["bundle.toml"]')
-        self.write("bundle.toml", '[[plugins]]\nid = "missing"\nmodule = "does_not_exist_for_nano_dsh"')
-        with patch("nano_dsh.loader.importlib.import_module", side_effect=ImportError):
-            with self.assertRaises(RunFailure):
-                Loader(FakeContext()).load(profile)
-
 
 if __name__ == "__main__":
     unittest.main()

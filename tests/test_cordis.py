@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from nano_dsh.contracts import PluginSpec, RunFailure
+from nano_dsh.contracts import PluginSpec
 from nano_dsh.cordis import Context, FiberState
 
 
@@ -48,7 +48,7 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(fiber.state, FiberState.PENDING)
         self.assertEqual(ctx.missing(fiber), ("tools",))
 
-    def test_duplicate_provider_is_rejected(self) -> None:
+    def test_duplicate_provider_keeps_the_current_service_owned(self) -> None:
         ctx = Context()
         ctx.add_fiber(
             spec("first"),
@@ -56,7 +56,7 @@ class ContextTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            RunFailure,
+            AssertionError,
             "Service already has a Provider: model",
         ):
             ctx.add_fiber(
@@ -64,8 +64,35 @@ class ContextTests(unittest.TestCase):
                 lambda context: context.provide("model", "second"),
             )
 
-        self.assertEqual(ctx.fibers[-1].state, FiberState.FAILED)
         self.assertEqual(ctx.get("model"), "first")
+
+    def test_context_methods_require_an_active_plugin(self) -> None:
+        ctx = Context()
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"Context\.provide\(\) requires an active Plugin",
+        ):
+            ctx.provide("model", object())
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"Context\.effect\(\) requires an active Plugin",
+        ):
+            ctx.effect(lambda: None)
+
+    def test_plugin_failure_propagates_without_cleanup(self) -> None:
+        ctx = Context()
+        cleanup: list[str] = []
+
+        def apply(context: Context) -> None:
+            context.effect(lambda: lambda: cleanup.append("plugin"))
+            assert False, "plugin failed"
+
+        with self.assertRaisesRegex(AssertionError, "plugin failed"):
+            ctx.add_fiber(spec("plugin"), apply)
+
+        self.assertEqual(cleanup, [])
 
     def test_effect_cleanup_uses_reverse_registration_order(self) -> None:
         ctx = Context()
@@ -80,7 +107,7 @@ class ContextTests(unittest.TestCase):
         ctx.dispose_fiber(fiber)
 
         self.assertEqual(cleanup, ["third", "second", "first"])
-        self.assertEqual(fiber.state, FiberState.DISPOSED)
+        self.assertNotIn(fiber, ctx.fibers)
 
     def test_provider_disposal_unloads_consumer(self) -> None:
         ctx = Context()
@@ -102,56 +129,32 @@ class ContextTests(unittest.TestCase):
 
         ctx.dispose_fiber(provider)
 
-        self.assertEqual(provider.state, FiberState.DISPOSED)
+        self.assertNotIn(provider, ctx.fibers)
         self.assertEqual(consumer.state, FiberState.PENDING)
         self.assertEqual(cleanup, ["ready"])
-        with self.assertRaises(KeyError):
-            ctx.get("model")
 
-    def test_disposer_failure_does_not_interrupt_provider_removal(self) -> None:
+    def test_disposer_failure_propagates(self) -> None:
         ctx = Context()
         cleanup: list[str] = []
-        failure = ValueError("consumer cleanup failed")
-
-        def healthy_consumer(context: Context) -> None:
-            context.effect(lambda: lambda: cleanup.append("healthy"))
 
         def failing_consumer(context: Context) -> None:
             def dispose() -> None:
                 cleanup.append("failing")
-                raise failure
+                assert False, "consumer cleanup failed"
 
             context.effect(lambda: dispose)
 
-        healthy = ctx.add_fiber(spec("healthy", "model"), healthy_consumer)
         failing = ctx.add_fiber(spec("failing", "model"), failing_consumer)
-
-        def provide_model(context: Context) -> None:
-            context.effect(lambda: lambda: cleanup.append("provider"))
-            context.provide("model", "old")
-
-        provider = ctx.add_fiber(spec("provider"), provide_model)
-
-        with self.assertRaisesRegex(ValueError, "consumer cleanup failed") as raised:
-            ctx.dispose_fiber(provider)
-
-        self.assertIs(raised.exception, failure)
-        self.assertEqual(provider.state, FiberState.DISPOSED)
-        self.assertEqual(healthy.state, FiberState.PENDING)
-        self.assertEqual(failing.state, FiberState.PENDING)
-        self.assertEqual(cleanup, ["failing", "healthy", "provider"])
-        with self.assertRaises(KeyError):
-            ctx.get("model")
-
-        replacement = ctx.add_fiber(
-            spec("replacement"),
-            lambda context: context.provide("model", "new"),
+        provider = ctx.add_fiber(
+            spec("provider"),
+            lambda context: context.provide("model", "old"),
         )
 
-        self.assertEqual(replacement.state, FiberState.ACTIVE)
-        self.assertEqual(healthy.state, FiberState.ACTIVE)
+        with self.assertRaisesRegex(AssertionError, "consumer cleanup failed"):
+            ctx.dispose_fiber(provider)
+
+        self.assertEqual(cleanup, ["failing"])
         self.assertEqual(failing.state, FiberState.ACTIVE)
-        self.assertEqual(ctx.get("model"), "new")
 
     def test_replacement_provider_reactivates_consumer(self) -> None:
         ctx = Context()
@@ -173,23 +176,6 @@ class ContextTests(unittest.TestCase):
 
         self.assertEqual(consumer.state, FiberState.ACTIVE)
         self.assertEqual(seen, ["first", "second"])
-
-    def test_activation_failure_cleans_effects_and_marks_failed(self) -> None:
-        ctx = Context()
-        cleanup: list[str] = []
-
-        def fail(context: Context) -> None:
-            context.effect(lambda: lambda: cleanup.append("first"))
-            context.effect(lambda: lambda: cleanup.append("second"))
-            raise ValueError("activation failed")
-
-        with self.assertRaisesRegex(ValueError, "activation failed"):
-            ctx.add_fiber(spec("broken"), fail)
-
-        fiber = ctx.fibers[-1]
-        self.assertEqual(fiber.state, FiberState.FAILED)
-        self.assertEqual(fiber.effects, [])
-        self.assertEqual(cleanup, ["second", "first"])
 
     def test_trace_omits_service_values(self) -> None:
         trace: list[tuple[str, str]] = []
@@ -218,9 +204,7 @@ class ContextTests(unittest.TestCase):
         ctx.dispose()
 
         self.assertEqual(cleanup, ["third", "second", "first"])
-        self.assertTrue(
-            all(fiber.state is FiberState.DISPOSED for fiber in ctx.fibers)
-        )
+        self.assertEqual(ctx.fibers, [])
 
 
 if __name__ == "__main__":

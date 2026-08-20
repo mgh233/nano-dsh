@@ -1,8 +1,10 @@
+import ast
 import unittest
 from pathlib import Path
 
 
-SOURCE_ROOT = Path(__file__).resolve().parents[1] / "nano_dsh"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = REPOSITORY_ROOT / "nano_dsh"
 
 
 def _code_lines(path: Path) -> int:
@@ -13,6 +15,18 @@ def _code_lines(path: Path) -> int:
 
 
 class CodeSizeTests(unittest.TestCase):
+    def test_repository_has_no_explicit_exception_control_flow(self) -> None:
+        counts = {"Raise": 0, "Try": 0, "TryStar": 0}
+        for path in REPOSITORY_ROOT.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for name in counts:
+                counts[name] += sum(
+                    isinstance(node, getattr(ast, name))
+                    for node in ast.walk(tree)
+                )
+
+        self.assertEqual(counts, {"Raise": 0, "Try": 0, "TryStar": 0})
+
     def test_production_code_stays_within_teaching_limits(self) -> None:
         counts = {
             path.relative_to(SOURCE_ROOT).as_posix(): _code_lines(path)

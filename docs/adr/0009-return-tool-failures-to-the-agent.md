@@ -1,11 +1,11 @@
-# Return Tool Failures to the Agent
+# Return predictable Tool failures to the Agent
 
-Expected Tool failures become Tool Results so the Agent can inspect and recover
-from them. Examples include a nonzero Bash exit and a non-unique Editor
-replacement. Configuration errors, Plugin failures, Provider failures, and
-runtime invariant violations propagate visibly and end the Agent Run.
-Each Tool validates its own model-generated arguments before execution.
-Invalid arguments become a Tool Failure rather than reaching the subprocess or
-filesystem operation.
-Each Bash Tool Execution has a 300-second timeout and returns at most 16,000
-characters. A timeout becomes a Tool Failure that the Agent can inspect.
+A predictable Tool rejection returns `ToolOutput(content, failed=True)`.
+Examples include an unknown Tool, a nonzero Bash exit, and an invalid Editor
+operation. `ToolsService` writes the content to the Session as a Tool Result and
+records a failed trace. The Agent can inspect it in the next Model Step.
+
+Internal invariants use concise `assert` statements. JSON, network, filesystem,
+encoding, and subprocess timeout errors are not translated. They propagate with
+their native Python traceback. The teaching implementation intentionally uses
+no explicit `raise`, `try`, or `except` statements.

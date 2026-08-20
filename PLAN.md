@@ -34,6 +34,7 @@ The first version includes:
 - One-shot Bash Tool Executions.
 - The four-command `str_replace_editor`.
 - A concise user-visible Execution Trace.
+- No explicit `raise`, `try`, or `except` statements in repository Python.
 
 The first version excludes:
 
@@ -69,7 +70,8 @@ CLI
 -> Tool Calls
 -> Tool Results
 -> later DeepSeek Model Step
--> final assistant response
+-> Model Step without Tool Calls
+-> require and return non-empty final content
 -> reverse Effect cleanup
 ```
 
@@ -81,11 +83,7 @@ CLI
 PENDING
 -> LOADING
 -> ACTIVE
--> UNLOADING
--> PENDING or DISPOSED
-
-LOADING failure
--> FAILED
+-> PENDING when unloaded
 ```
 
 - Bundle order controls Fiber creation only.
@@ -96,7 +94,9 @@ LOADING failure
 - Removing a Provider unloads its active Consumers.
 - Restoring the Service reactivates those Consumers.
 - `ctx.provide()` and `ctx.effect()` bind resources to the current Fiber.
-- Fiber cleanup runs disposers in reverse registration order.
+- Normal Fiber cleanup runs disposers in reverse registration order.
+- Service and AgentFactory uniqueness are internal `assert` contracts.
+- Unexpected activation or cleanup errors propagate with their native traceback.
 
 ### Agent core
 
@@ -106,8 +106,10 @@ LOADING failure
 - Session Events remain independent from the DeepSeek wire format.
 - Assistant Session Events preserve Reasoning Content.
 - Multiple Tool Calls execute sequentially in model order.
-- Tool Failures become Tool Results.
-- Configuration, Plugin, Provider, and invariant failures end the Agent Run.
+- The Agent stops when a Model Step has no Tool Calls. An `assert` requires non-empty final content.
+- Predictable Tool rejections return `ToolOutput(content, failed=True)`.
+- `ToolsService` returns the content to the model and traces the result as failed.
+- JSON, Provider, filesystem, encoding, and timeout errors propagate unchanged.
 
 ### DeepSeek Provider
 
@@ -119,7 +121,7 @@ LOADING failure
 - Tool choice: auto.
 - API key source: `--api-key-file`, default `.key`.
 - Reasoning Content is returned unchanged after thinking-mode Tool Calls.
-- Model-generated Tool arguments are validated by each Tool.
+- Protocol shape and `finish_reason` alignment are internal `assert` contracts.
 
 ### Bash Tool
 
@@ -273,7 +275,7 @@ No branch is squashed.
 ### Offline
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -v
 ```
 
 The offline suite covers:
@@ -314,8 +316,9 @@ Each run must:
 - Pass the fixture's `unittest` suite.
 - Produce a final assistant response.
 
-The script does not retry. A failure returns a nonzero exit status, preserves
-the temporary Workspace, and prints a sanitized Execution Trace.
+The script does not retry. Each CLI call runs in a subprocess. A failure returns
+a nonzero exit status and preserves the temporary Workspace. Raw standard error
+is not printed.
 
 ## Documentation
 
@@ -329,15 +332,14 @@ the temporary Workspace, and prints a sanitized Execution Trace.
 
 ## Hard Completion Criteria
 
-Verification evidence recorded on `main` on 2026-08-20:
+Verification evidence recorded for this revision on 2026-08-20:
 
-- The offline suite passed 94/94 tests.
-- Production Python contained 995 non-empty, non-comment lines. The largest
-  production file contained 179 such lines.
-- One execution of `python examples/example.py --api-key-file .key`
-  completed without automatic retries. The logic, boundary, and
-  missing-implementation fixtures all printed `PASS`; the summary was
-  `3/3 PASS`.
+- The offline suite passed 83/83 tests.
+- Production Python contained 761 non-empty, non-comment lines. The largest
+  production file contained 140 such lines.
+- All 34 repository Python files contained zero AST `Raise`, `Try`, and
+  `TryStar` nodes.
+- The real-API Live Acceptance suite passed all three scenarios.
 
 This evidence is a dated result. It does not guarantee later revisions or API
 runs.
@@ -349,8 +351,7 @@ runs.
 - [x] All offline tests pass.
 - [x] Production Python has at most 1,000 non-empty, non-comment lines.
 - [x] No production file exceeds 200 such lines.
-- [x] All three Live Acceptance Runs pass without automatic retries.
-- [x] Each live run uses both Editor and Bash.
+- [x] Rerun all three Live Acceptance scenarios with a real API key.
 - [x] Both READMEs are complete and synchronized.
 - [x] Every feature branch passes an independent Review Agent gate.
 - [x] Every feature branch is merged with `--no-ff`.

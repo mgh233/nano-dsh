@@ -7,10 +7,9 @@ from typing import Any
 
 from nano_dsh.contracts import (
     Disposer,
-    RunFailure,
     ToolCall,
     ToolDefinition,
-    ToolFailure,
+    ToolOutput,
     Trace,
 )
 
@@ -24,8 +23,7 @@ class ToolsService:
 
     def register(self, definition: ToolDefinition) -> Disposer:
         # Register one Tool and return its disposer.
-        if definition.name in self._definitions:
-            raise RunFailure(f"Tool already registered: {definition.name}")
+        assert definition.name not in self._definitions
         self._definitions[definition.name] = definition
 
         def dispose() -> None:
@@ -46,18 +44,9 @@ class ToolsService:
         if definition is None:
             self._trace("tool", f"failed {label}")
             return f"Error: unknown Tool: {call.name}"
-        try:
-            arguments = json.loads(call.arguments)
-        except json.JSONDecodeError as error:
-            self._trace("tool", f"failed {label}")
-            return f"Error: invalid JSON arguments: {error.msg}"
-        try:
-            result = definition.handler(arguments, workspace)
-        except ToolFailure as error:
-            self._trace("tool", f"failed {label}")
-            return f"Error: {error}"
-        self._trace("tool", f"complete {label}")
-        return result
+        result: ToolOutput = definition.handler(json.loads(call.arguments), workspace)
+        self._trace("tool", f"{'failed' if result.failed else 'complete'} {label}")
+        return result.content
 
 
 def apply(ctx: Any, config: Mapping[str, object]) -> None:

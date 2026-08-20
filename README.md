@@ -4,6 +4,19 @@ nano-dsh is a small, synchronous teaching harness that shows how a CLI task beco
 
 Read this guide once from top to bottom. Then follow the five-layer order when you read the code.
 
+## 0. Original Harness and the teaching path
+
+This table names the direct teaching path. nano-dsh keeps the visible control flow and omits production machinery that does not help explain it.
+
+| Layer | Original DeepSeek Harness | nano-dsh teaching path |
+| --- | --- | --- |
+| Apps | Production CLI and application surfaces. | One headless CLI Driver. No Web UI or session persistence. |
+| Boot / Profile / Loader | Production Profile composition and Loader machinery. | Ordered TOML Profile and Bundles load Plugin modules directly. No Profile Patch overlays or hot reload. |
+| Cordis | Dynamic Plugin runtime with production scope and asynchronous lifecycle machinery. | One synchronous Context with Fibers, Services, Effects, pending Consumers, removal, and reactivation. No scopes, async lifecycle, or transactional rollback. |
+| Agent core | Production Agent, Session, and Tool composition. | One AgentFactory, one in-memory Session, and sequential Tool Calls. No multi-Agent execution, Skills, Memory, or Workspace-instruction loading. |
+| DeepSeek Provider / tools | Production provider and Tool integrations. | One non-streaming Chat Completions Provider plus Bash and Editor. No retries, streaming, persistent shell, or operating-system sandbox. |
+| Failure flow | Production layers translate and recover from selected errors. | The teaching code has no explicit `raise`, `try`, or `except` statements. Internal contracts use `assert`. Expected Tool failures use `ToolOutput`. Other errors keep their native Python traceback. |
+
 ## 1. One complete Agent Run
 
 The normal headless run starts from this command:
@@ -44,9 +57,9 @@ Here is the same trace with concrete code locations.
 5. `deepseek` reads the one-line key file and provides `llm`. Once `sessions`, `agents`, `tools`, and `llm` exist, [nano_dsh/plugins/agent_loop.py](nano_dsh/plugins/agent_loop.py) activates. It registers an `AgentFactory`; it does not yet create an Agent.
 6. [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py) is the Driver. It calls `agents.create(workspace).run(task)`. The factory creates a new in-memory Session.
 7. The Agent appends a user Session Event and sends Model Step 1 through [nano_dsh/plugins/deepseek.py](nano_dsh/plugins/deepseek.py). The model can return Tool Calls for `str_replace_editor` and `bash`.
-8. [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py) or [nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py) executes each call. [nano_dsh/plugins/tools.py](nano_dsh/plugins/tools.py) converts an expected Tool Failure into a model-visible Tool Result. The Agent appends each result as a `ToolResultEvent`.
-9. The loop sends a later Model Step with the earlier assistant event and Tool Results. It repeats until the provider returns non-empty final text. That text goes to standard output.
-10. After `boot()` succeeds and returns the Context, the next statement in `main()` calls `context.dispose()` directly. If Boot or Plugin activation fails before that return, `boot()` itself disposes the Context and re-raises. In either cleanup path, Fibers clean up in reverse creation order. Their Effects remove the AgentFactory, Tool registrations, and Fiber-owned Services.
+8. [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py) or [nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py) executes each call. A predictable rejection returns `ToolOutput(content, failed=True)`. `ToolsService` traces it as failed and returns its content to the model through a `ToolResultEvent`.
+9. The loop sends a later Model Step with the earlier assistant event and Tool Results. It stops when a Model Step has no Tool Calls. It requires and returns non-empty final content.
+10. After `boot()` succeeds, `main()` calls `context.dispose()`. Normal cleanup visits Fibers and Effects in reverse order. An unexpected Boot, Plugin, cleanup, JSON, network, filesystem, encoding, or subprocess timeout error propagates directly with its native Python traceback.
 
 The trace is concise by design. It does not print the API key or Reasoning Content.
 
@@ -61,12 +74,12 @@ Use these definitions while reading. [CONTEXT.md](CONTEXT.md) is the canonical g
 | Plugin | A loadable capability. Its `apply(ctx, config)` function can provide Services or register Effects. |
 | Fiber | One applied Plugin instance. It has a lifecycle state and owns the Effects created while it loads. |
 | Service | A named capability in the Context. A Plugin requires Service names, not concrete Plugin identities. |
-| Effect | A Fiber-owned setup action and optional disposer. Disposal runs in reverse registration order. |
+| Effect | A Fiber-owned setup action and optional disposer. Normal disposal runs disposers in reverse registration order. |
 | Session Event | One typed in-memory record of user input, assistant output, or a Tool Result. |
 | Provider | A Plugin that supplies a Service. The DeepSeek Provider supplies `llm`. |
 | Tool Call | A model request with a Tool name and JSON arguments. It becomes a Tool Execution, then a Tool Result. |
 
-Do not merge these concepts. A Fiber becoming active is not an Agent Run. Registering an AgentFactory is not creating an Agent. A Tool Failure is not a Run Failure.
+Do not merge these concepts. A Fiber becoming active is not an Agent Run. Registering an AgentFactory is not creating an Agent. A failed Tool Output is still a model-visible Tool Result.
 
 ## 3. Read the code in five layers
 
@@ -83,7 +96,7 @@ Read one layer at a time. Each layer answers a different question.
 
 - Files: [nano_dsh/boot.py](nano_dsh/boot.py), [nano_dsh/loader.py](nano_dsh/loader.py), [profiles/headless.toml](profiles/headless.toml), [bundles/base.toml](bundles/base.toml), and [bundles/headless.toml](bundles/headless.toml).
 - Input: root Services and the selected Profile.
-- Output: an assembled Context in which every enabled Fiber is `ACTIVE`, or a visible `RunFailure`.
+- Output: an assembled Context in which every enabled Fiber is `ACTIVE`. An unresolved Fiber fails an internal `assert`.
 - Why it exists: it makes application composition declarative. It also shows that a Bundle gives creation order while Service availability gives activation order.
 
 ### 3. Cordis runtime
@@ -91,13 +104,13 @@ Read one layer at a time. Each layer answers a different question.
 - Files: [nano_dsh/cordis.py](nano_dsh/cordis.py) and [nano_dsh/contracts.py](nano_dsh/contracts.py).
 - Input: Plugin Specifications, required Service names, and Plugin `apply` functions.
 - Output: active Fibers, published Services, and Fiber-owned cleanup.
-- Why it exists: this is the minimal dynamic lifecycle. A Consumer can remain `PENDING`, activate when a Provider arrives, return to `PENDING` if that Service disappears, and reactivate when it returns.
+- Why it exists: this is the minimal dynamic lifecycle. A Consumer can remain `PENDING`, activate when a Provider arrives, return to `PENDING` if that Service disappears, and reactivate when it returns. Normal cleanup runs disposers in reverse registration order.
 
 ### 4. Agent core
 
 - Files: [nano_dsh/plugins/agents.py](nano_dsh/plugins/agents.py), [nano_dsh/plugins/sessions.py](nano_dsh/plugins/sessions.py), [nano_dsh/plugins/tools.py](nano_dsh/plugins/tools.py), [nano_dsh/plugins/agent_loop.py](nano_dsh/plugins/agent_loop.py), [nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py), and [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py).
 - Input: a task, a Workspace, an `llm` Service, and registered Tool definitions.
-- Output: an append-only Session and a final assistant response. Expected Tool Failures become Tool Results for a later Model Step.
+- Output: an append-only Session and the non-empty content of the first Model Step without Tool Calls. A Model Step with Tool Calls can have null content. Predictable Tool rejections return `ToolOutput(content, failed=True)`.
 - Why it exists: this layer keeps AgentFactory registration separate from Agent creation. It also keeps sequential Tool execution and Session state independent from the provider wire format.
 
 ### 5. Provider
@@ -144,7 +157,7 @@ The CLI selects the headless Profile itself. You do not pass a Profile argument.
 Run this without an API key or network access:
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -v
 ```
 
 This suite verifies the Fiber lifecycle, dynamic loading, reverse Effect cleanup, Session serialization, Reasoning Content round-trip, ordered Tool Calls, Editor confinement, Bash behavior, and a full scripted headless Agent Run.
@@ -170,7 +183,7 @@ Summary: 3/3 PASS
 
 The script performs one attempt per fixture. It does not retry automatically.
 
-Verification record (2026-08-20): on `main`, the offline suite passed 94/94 tests; production Python contained 995 non-empty, non-comment lines, and its largest file contained 179; one live command execution completed without automatic retries and passed logic, boundary, and missing-implementation fixtures, for 3/3 total. This dated record does not guarantee the result of later revisions or API runs.
+Verification record (2026-08-20): this revision passed the offline suite 83/83 and the real-API Live Acceptance suite 3/3. Production Python contains 761 non-empty, non-comment lines. The largest production file contains 140 such lines. The repository contains 34 Python files with zero AST `Raise`, `Try`, and `TryStar` nodes.
 
 ## 6. Security boundary and failure behavior
 
@@ -178,8 +191,10 @@ Verification record (2026-08-20): on `main`, the offline suite passed 94/94 test
 - Every Bash Tool Execution starts a fresh `/bin/bash` process. Shell state does not persist. It has a 300-second timeout and a 16,000-character model-visible output limit.
 - `str_replace_editor` accepts only absolute paths. It resolves paths and rejects targets outside the Workspace, including symbolic-link escapes. This path confinement does not sandbox Bash.
 - `.key` is ignored by Git. The Provider reads one non-empty line into memory. The Bash child environment removes `DEEPSEEK_API_KEY`.
-- There is no automatic retry for provider requests or the live suite. There is no Model Step cap. A provider, configuration, Plugin, or runtime-invariant failure ends the Agent Run visibly.
-- Expected Tool failures are different. Invalid Tool arguments, a nonzero Bash exit, or a non-unique editor replacement become Tool Results that the Agent can inspect in a later Model Step.
+- There is no automatic retry for provider requests or the live suite. There is no Model Step cap.
+- Internal invariants use concise `assert` statements. Examples include unique Service Providers, one AgentFactory, the DeepSeek response shape, and non-empty final assistant content.
+- Predictable Tool failures return `ToolOutput(content, failed=True)`. Examples include an unknown Tool, a nonzero Bash exit, and a rejected Editor operation. `ToolsService` writes the content back to the model and records a failed trace.
+- JSON, network, filesystem, encoding, and subprocess timeout errors are not wrapped. Python exposes the original traceback.
 
 Use a disposable Workspace for live runs. Do not put secrets or important host files where a trusted Bash process can reach them.
 
@@ -211,4 +226,4 @@ This workflow preserves a reviewable implementation history without making worke
 
 [PLAN.md](PLAN.md) states the product boundary, runtime contracts, verification target, and collaboration gate.
 
-[docs/adr/](docs/adr/) records the hard-to-reverse choices: semantic fidelity, the dynamic Plugin lifecycle, trusted Bash, Session/Provider separation, deferred Agent creation, the code-size cap, synchronous execution, Python 3.12 with no runtime dependencies, and Tool Failure semantics.
+[docs/adr/](docs/adr/) records the hard-to-reverse choices: semantic fidelity, the dynamic Plugin lifecycle, trusted Bash, Session/Provider separation, deferred Agent creation, the code-size cap, synchronous execution, Python 3.12 with no runtime dependencies, and failed `ToolOutput` semantics.

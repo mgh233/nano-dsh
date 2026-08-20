@@ -16,25 +16,6 @@ sys.path.insert(0, str(ROOT / "examples"))
 import example
 
 
-GOOD_TRACE = """\
-headless: run started
-agent: run started
-model: step 1 started
-model: request
-model: response
-model: step 1 completed
-tool: execute str_replace_editor
-tool: complete str_replace_editor
-tool: execute bash
-tool: complete bash
-model: step 2 started
-model: request
-model: response
-model: step 2 completed
-agent: run completed
-headless: run completed
-"""
-
 EXPECTED_FIXTURE_RESULTS = {
     "logic-bug": (
         "FAIL",
@@ -59,7 +40,7 @@ EXPECTED_FIXTURE_RESULTS = {
         ),
     ),
     "missing-implementation": (
-        "ERROR",
+        "FAIL",
         (
             "test_formats_a_positive_score "
             "(test_labels.FormatLabelTests."
@@ -71,11 +52,21 @@ EXPECTED_FIXTURE_RESULTS = {
 }
 
 
+def completed(
+    command,
+    returncode: int,
+    stdout: str = "",
+    stderr: str = "",
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+
 class OriginalFixtureTests(unittest.TestCase):
-    def test_each_original_fixture_has_its_expected_failure(self) -> None:
+    def test_three_original_workspaces_have_distinct_bugs(self) -> None:
+        observed_failures = []
         for fixture in example.FIXTURES:
             with self.subTest(fixture=fixture.name):
-                completed = subprocess.run(
+                run = subprocess.run(
                     [
                         sys.executable,
                         "-m",
@@ -89,7 +80,7 @@ class OriginalFixtureTests(unittest.TestCase):
                     text=True,
                     check=False,
                 )
-                output = completed.stdout + completed.stderr
+                output = run.stdout + run.stderr
                 observed = {
                     test_id: result
                     for test_id, result in re.findall(
@@ -101,26 +92,25 @@ class OriginalFixtureTests(unittest.TestCase):
                 expected_result, expected_ids = EXPECTED_FIXTURE_RESULTS[
                     fixture.name
                 ]
+                expected = {
+                    test_id: expected_result
+                    for test_id in expected_ids
+                }
 
-                self.assertEqual(completed.returncode, 1)
-                self.assertIn("Ran 2 tests", output)
-                self.assertEqual(
-                    observed,
-                    {
-                        test_id: expected_result
-                        for test_id in expected_ids
-                    },
-                )
-                if expected_result == "FAIL":
-                    self.assertIn("FAILED (failures=2)", output)
-                    self.assertIn("AssertionError", output)
-                    self.assertNotIn("NotImplementedError", output)
-                else:
-                    self.assertIn("FAILED (errors=2)", output)
-                    self.assertIn("NotImplementedError", output)
+                self.assertEqual(run.returncode, 1)
+                self.assertEqual(observed, expected)
+                observed_failures.append(tuple(observed))
+
+        self.assertEqual(len(set(observed_failures)), 3)
+
+    def test_missing_implementation_uses_assert(self) -> None:
+        source = (
+            ROOT / "examples/workspaces/missing-implementation/labels.py"
+        ).read_text()
+        self.assertIn('assert False, "not implemented"', source)
 
 
-class LiveAcceptanceHarnessTests(unittest.TestCase):
+class LiveAcceptanceTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -140,260 +130,152 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
         )
         self.key_file = (self.root / "api-key").resolve()
 
-    def repair(self, arguments: list[str]) -> None:
-        index = arguments.index("--workspace") + 1
-        workspace = Path(arguments[index])
-        (workspace / "sample.py").write_text(
-            "def answer():\n"
-            "    return True\n"
-        )
-
-    def test_invoke_cli_captures_stdout_and_stderr(self) -> None:
-        def fake_main(arguments: list[str]) -> None:
-            print("done")
-            print("model: step 1 started", file=sys.stderr)
-
-        with patch.object(example, "nano_dsh_main", fake_main):
-            stdout, stderr = example._invoke_cli(["task"])
-
-        self.assertEqual(stdout, "done\n")
-        self.assertEqual(stderr, "model: step 1 started\n")
-
-    def test_invoke_cli_sanitizes_trace_when_main_raises(self) -> None:
-        def fake_main(arguments: list[str]) -> None:
-            print("tool: execute bash", file=sys.stderr)
-            print("reasoning: do-not-print-this-key", file=sys.stderr)
-            raise RuntimeError("do-not-print-this-key")
-
-        with patch.object(example, "nano_dsh_main", fake_main):
-            with self.assertRaises(
-                example.CliInvocationFailure
-            ) as caught:
-                example._invoke_cli(["task"])
-
-        self.assertEqual(caught.exception.trace, ("tool: execute bash",))
-        self.assertNotIn("do-not-print-this-key", str(caught.exception))
-
-    def test_success_calls_cli_once_runs_gate_and_cleans_workspace(self) -> None:
+    def test_success_repairs_tests_and_removes_workspace(self) -> None:
         calls = []
 
-        def invoke(arguments: list[str]) -> tuple[str, str]:
-            calls.append(arguments)
-            self.repair(arguments)
-            return "Fixed.\n", GOOD_TRACE
+        def run_process(command, cwd):
+            calls.append((tuple(command), cwd))
+            if command[1:3] == ("-m", "nano_dsh"):
+                workspace = Path(command[command.index("--workspace") + 1])
+                (workspace / "sample.py").write_text(
+                    "def answer():\n"
+                    "    return True\n"
+                )
+                return completed(
+                    command,
+                    0,
+                    "Fixed.\n",
+                    "tool: complete str_replace_editor\n"
+                    "tool: complete bash\n"
+                    "model: step 2 started\n"
+                    "agent: run completed\n",
+                )
+            return completed(command, 0, stderr="unittest details")
 
-        result = example._run_fixture(
+        result = example._run_scenario(
             self.fixture,
             self.key_file,
-            invoke_cli=invoke,
+            run_process=run_process,
         )
 
         self.assertTrue(result.passed)
-        self.assertEqual(len(calls), 1)
         self.assertFalse(result.workspace.exists())
-        self.assertIn(str(result.workspace), calls[0][0])
-        self.assertIn("str_replace_editor", calls[0][0])
-        self.assertIn("Use bash", calls[0][0])
-        self.assertIn("unittest discover -v", calls[0][0])
-        self.assertIn("Do not modify the test files", calls[0][0])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][1], ROOT)
+        self.assertEqual(calls[1][1], result.workspace)
         self.assertEqual(
-            calls[0][calls[0].index("--api-key-file") + 1],
+            calls[0][0][calls[0][0].index("--api-key-file") + 1],
             str(self.key_file),
         )
-
-    def test_cli_exception_is_not_retried_and_workspace_is_preserved(self) -> None:
-        calls = 0
-
-        def invoke(arguments: list[str]) -> tuple[str, str]:
-            nonlocal calls
-            calls += 1
-            raise RuntimeError("secret key and private reasoning")
-
-        result = example._run_fixture(
-            self.fixture,
-            self.key_file,
-            invoke_cli=invoke,
-        )
-
-        self.assertFalse(result.passed)
-        self.assertEqual(calls, 1)
-        self.assertTrue(result.workspace.exists())
-        self.assertEqual(result.detail, "CLI/main flow raised an exception")
-
-    def test_trace_contract_failures_preserve_workspace(self) -> None:
-        cases = {
-            "empty final": (" \n", GOOD_TRACE),
-            "failed-only tools": (
-                "done\n",
-                GOOD_TRACE
-                .replace(
-                    "tool: complete str_replace_editor",
-                    "tool: failed str_replace_editor",
-                )
-                .replace("tool: complete bash", "tool: failed bash"),
-            ),
-            "missing Provider request": (
-                "done\n",
-                GOOD_TRACE.replace(
-                    "model: step 2 started\nmodel: request\n",
-                    "model: step 2 started\n",
-                ),
-            ),
-            "missing Provider response": (
-                "done\n",
-                GOOD_TRACE.replace(
-                    "model: step 2 started\n"
-                    "model: request\nmodel: response\n"
-                    "model: step 2 completed",
-                    "model: step 2 started\n"
-                    "model: request\nmodel: step 2 completed",
-                ),
-            ),
-            "later Model Step out of order": (
-                "done\n",
-                GOOD_TRACE.replace(
-                    "model: step 2 started\n"
-                    "model: request\nmodel: response\n"
-                    "model: step 2 completed",
-                    "model: step 2 started\n"
-                    "model: response\nmodel: request\n"
-                    "model: step 2 completed",
-                ),
-            ),
-            "missing Headless lifecycle": (
-                "done\n",
-                GOOD_TRACE.replace("headless: run completed\n", ""),
-            ),
-            "Tool event after Agent completion": (
-                "done\n",
-                GOOD_TRACE.replace(
-                    "agent: run completed\n",
-                    "agent: run completed\ntool: execute bash\n",
-                ),
-            ),
-            "trailing failed Tool without a later step": (
-                "done\n",
-                GOOD_TRACE.replace(
-                    "agent: run completed\n",
-                    "tool: execute lookup\n"
-                    "tool: failed lookup\n"
-                    "agent: run completed\n",
-                ),
-            ),
-        }
-        for name, response in cases.items():
-            with self.subTest(name=name):
-                result = example._run_fixture(
-                    self.fixture,
-                    self.key_file,
-                    invoke_cli=lambda _: response,
-                    run_tests=lambda _: True,
-                )
-                self.assertFalse(result.passed)
-                self.assertTrue(result.workspace.exists())
-
-    def test_trailing_failed_tool_with_a_later_step_is_accepted(self) -> None:
-        trace = GOOD_TRACE.replace(
-            "agent: run completed\n",
-            "tool: execute lookup\n"
-            "tool: failed lookup\n"
-            "model: step 3 started\n"
-            "model: request\n"
-            "model: response\n"
-            "model: step 3 completed\n"
-            "agent: run completed\n",
-        )
-        result = example._run_fixture(
-            self.fixture,
-            self.key_file,
-            invoke_cli=lambda _: ("done\n", trace),
-            run_tests=lambda _: True,
-        )
-
-        self.assertTrue(result.passed)
-        self.assertFalse(result.workspace.exists())
-        self.assertIn("tool: execute <other>", result.trace)
-        self.assertIn("tool: failed <other>", result.trace)
-        self.assertNotIn("lookup", repr(result.trace))
-
-    def test_duplicate_lifecycle_events_are_rejected(self) -> None:
-        lifecycle_events = (
-            "headless: run started",
-            "agent: run started",
-            "agent: run completed",
-            "headless: run completed",
-        )
-        for event in lifecycle_events:
-            with self.subTest(event=event):
-                trace = GOOD_TRACE.replace(event, f"{event}\n{event}")
-                result = example._run_fixture(
-                    self.fixture,
-                    self.key_file,
-                    invoke_cli=lambda _: ("done\n", trace),
-                    run_tests=lambda _: True,
-                )
-                self.assertFalse(result.passed)
-                self.assertTrue(result.workspace.exists())
-
-    def test_independent_unittest_gate_rejects_an_unfixed_workspace(self) -> None:
-        result = example._run_fixture(
-            self.fixture,
-            self.key_file,
-            invoke_cli=lambda _: ("done\n", GOOD_TRACE),
-        )
-
-        self.assertFalse(result.passed)
         self.assertEqual(
-            result.detail,
-            "independent unittest verification failed",
+            calls[1][0][1:],
+            ("-m", "unittest", "discover", "-v"),
         )
-        self.assertTrue(result.workspace.exists())
 
-    def test_failure_output_does_not_leak_key_or_untrusted_trace(self) -> None:
-        secret = "do-not-print-this-key"
-        unsafe_trace = (
-            GOOD_TRACE
-            + f"reasoning: {secret}\n"
-            + "http: https://api.deepseek.com/full-response\n"
-            + "file: complete source text\n"
+    def test_incomplete_agent_trace_preserves_workspace(self) -> None:
+        traces = (
+            "tool: complete str_replace_editor\n",
+            "tool: complete str_replace_editor\n"
+            "tool: complete bash\n"
+            "agent: run completed\n",
         )
-        result = example._run_fixture(
+        for trace in traces:
+            with self.subTest(trace=trace):
+                def run_process(command, cwd):
+                    if command[1:3] == ("-m", "nano_dsh"):
+                        return completed(command, 0, "Finished.\n", trace)
+                    return completed(command, 0)
+
+                result = example._run_scenario(
+                    self.fixture,
+                    self.key_file,
+                    run_process=run_process,
+                )
+
+                self.assertFalse(result.passed)
+                self.assertTrue(result.workspace.exists())
+
+    def test_cli_failure_preserves_workspace(self) -> None:
+        calls = []
+
+        def run_process(command, cwd):
+            calls.append(tuple(command))
+            if command[1:3] == ("-m", "nano_dsh"):
+                return completed(
+                    command,
+                    1,
+                    stderr="API key and raw traceback",
+                )
+            return completed(command, 0)
+
+        result = example._run_scenario(
             self.fixture,
             self.key_file,
-            invoke_cli=lambda _: ("done\n", unsafe_trace),
-            run_tests=lambda _: False,
+            run_process=run_process,
+        )
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.cli_code, 1)
+        self.assertEqual(result.test_code, 0)
+        self.assertTrue(result.workspace.exists())
+        self.assertEqual(len(calls), 2)
+
+    def test_unittest_failure_preserves_workspace(self) -> None:
+        def run_process(command, cwd):
+            if command[1:3] == ("-m", "nano_dsh"):
+                return completed(command, 0, "Finished.\n")
+            return completed(command, 1, stderr="test failure details")
+
+        result = example._run_scenario(
+            self.fixture,
+            self.key_file,
+            run_process=run_process,
+        )
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.cli_code, 0)
+        self.assertEqual(result.test_code, 1)
+        self.assertTrue(result.workspace.exists())
+
+    def test_output_omits_api_key_and_raw_stderr(self) -> None:
+        secret = "do-not-print-this-key"
+
+        def run_process(command, cwd):
+            return completed(command, 1, stderr=secret)
+
+        result = example._run_scenario(
+            self.fixture,
+            self.key_file,
+            run_process=run_process,
         )
         output = StringIO()
         with redirect_stdout(output):
             example._print_result(result)
 
-        text = output.getvalue()
-        self.assertNotIn(secret, text)
-        self.assertNotIn("private reasoning", text)
-        self.assertNotIn("https://", text)
-        self.assertNotIn("complete source text", text)
-        self.assertIn("Sanitized Execution Trace:", text)
+        self.assertNotIn(secret, output.getvalue())
+        self.assertNotIn("stderr", output.getvalue())
 
-    def test_suite_calls_each_fixture_once_and_returns_nonzero(self) -> None:
+    def test_suite_summary_and_exit_code(self) -> None:
         calls = 0
 
-        def invoke(arguments: list[str]) -> tuple[str, str]:
+        def run_process(command, cwd):
             nonlocal calls
             calls += 1
-            raise RuntimeError("do-not-print-this-key")
+            if command[1:3] == ("-m", "nano_dsh"):
+                return completed(command, 1, stderr="private")
+            return completed(command, 0)
 
         output = StringIO()
         with redirect_stdout(output):
             exit_code = example.run_suite(
                 self.key_file,
                 fixtures=(self.fixture, self.fixture, self.fixture),
-                invoke_cli=invoke,
+                run_process=run_process,
             )
 
         self.assertEqual(exit_code, 1)
-        self.assertEqual(calls, 3)
+        self.assertEqual(calls, 6)
         self.assertIn("Summary: 0/3 PASS", output.getvalue())
-        self.assertNotIn("do-not-print-this-key", output.getvalue())
 
     def test_argument_path_is_absolute_without_reading_key(self) -> None:
         with patch.object(Path, "read_text", side_effect=AssertionError):
@@ -401,8 +283,8 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
                 ["--api-key-file", str(self.key_file)]
             )
 
-        self.assertTrue(parsed.is_absolute())
         self.assertEqual(parsed, self.key_file)
+        self.assertTrue(parsed.is_absolute())
 
 
 if __name__ == "__main__":

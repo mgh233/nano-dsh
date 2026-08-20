@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from .contracts import PluginSpec, RunFailure
+from .contracts import PluginSpec
+from .cordis import Context
 
 
 RawApply = Callable[[object, Mapping[str, object]], object]
@@ -27,89 +28,50 @@ class Bundle:
 
 def read_profile(path: Path) -> Profile:
     # Read a Profile and resolve Bundle paths from its directory.
-    data = _read_toml(path, "Profile")
-    bundles = data.get("bundles")
-    if not isinstance(bundles, list):
-        raise RunFailure(f"Profile {path} must contain a bundles array")
-    resolved: list[Path] = []
-    for value in bundles:
-        if not isinstance(value, str) or not value.strip():
-            raise RunFailure(f"Profile {path} has an invalid Bundle path")
-        resolved.append((path.parent / value).resolve())
-    return Profile(tuple(resolved))
+    data = _read_toml(path)
+    return Profile(tuple((path.parent / value).resolve() for value in data["bundles"]))
 
 
 def read_bundle(path: Path) -> Bundle:
-    # Read one Bundle and validate each Plugin Specification.
-    data = _read_toml(path, "Bundle")
-    entries = data.get("plugins")
-    if not isinstance(entries, list):
-        raise RunFailure(f"Bundle {path} must contain a plugins array")
-    plugins: list[PluginSpec] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            raise RunFailure(f"Bundle {path} has a non-table Plugin entry")
-        plugins.append(_plugin_spec(path, entry))
-    return Bundle(tuple(plugins))
+    # Read one Bundle and construct its Plugin Specifications.
+    data = _read_toml(path)
+    return Bundle(tuple(_plugin_spec(entry) for entry in data["plugins"]))
 
 
 class Loader:
     # Turn Profile entries into dynamically imported Plugin Fibers.
 
-    def __init__(self, context: object) -> None:
+    def __init__(self, context: Context) -> None:
         self._context = context
 
     def load(self, profile_path: Path) -> tuple[PluginSpec, ...]:
         # Register Plugins in Profile then Bundle entry order.
-        seen: set[str] = set()
         loaded: list[PluginSpec] = []
         for bundle_path in read_profile(profile_path).bundles:
             for spec in read_bundle(bundle_path).plugins:
-                if spec.id in seen:
-                    raise RunFailure(f"Duplicate Plugin id: {spec.id}")
-                seen.add(spec.id)
                 fiber_apply = _bind_config(_load_apply(spec), spec.config)
-                self._context.add_fiber(spec, fiber_apply)  # type: ignore[attr-defined]
+                self._context.add_fiber(spec, fiber_apply)
                 loaded.append(spec)
         return tuple(loaded)
 
 
-def _read_toml(path: Path, kind: str) -> dict[str, Any]:
-    try:
-        with path.open("rb") as source:
-            data = tomllib.load(source)
-    except FileNotFoundError as error:
-        raise RunFailure(f"{kind} file does not exist: {path}") from error
-    except tomllib.TOMLDecodeError as error:
-        raise RunFailure(f"Malformed {kind} TOML: {path}") from error
-    return data
+def _read_toml(path: Path) -> dict[str, Any]:
+    with path.open("rb") as source:
+        return tomllib.load(source)
 
 
-def _plugin_spec(path: Path, entry: dict[str, Any]) -> PluginSpec:
-    plugin_id = entry.get("id")
-    module = entry.get("module")
-    inject = entry.get("inject", [])
-    config = entry.get("config", {})
-    if not isinstance(plugin_id, str) or not plugin_id.strip():
-        raise RunFailure(f"Bundle {path} has an empty Plugin id")
-    if not isinstance(module, str) or not module.strip():
-        raise RunFailure(f"Bundle {path} has an empty Plugin module")
-    if not isinstance(inject, list) or not all(isinstance(name, str) for name in inject):
-        raise RunFailure(f"Plugin {plugin_id} has invalid inject Services")
-    if not isinstance(config, dict):
-        raise RunFailure(f"Plugin {plugin_id} config must be a table")
-    return PluginSpec(plugin_id, module, tuple(inject), config)
+def _plugin_spec(entry: dict[str, Any]) -> PluginSpec:
+    return PluginSpec(
+        entry["id"],
+        entry["module"],
+        tuple(entry.get("inject", ())),
+        entry.get("config", {}),
+    )
 
 
 def _load_apply(spec: PluginSpec) -> RawApply:
-    try:
-        module = importlib.import_module(spec.module)
-    except ImportError as error:
-        raise RunFailure(f"Cannot import Plugin {spec.id}: {spec.module}") from error
-    apply = getattr(module, "apply", None)
-    if not callable(apply):
-        raise RunFailure(f"Plugin {spec.id} has no callable apply(ctx, config)")
-    return cast(RawApply, apply)
+    module = importlib.import_module(spec.module)
+    return cast(RawApply, module.apply)
 
 
 def _bind_config(

@@ -6,12 +6,11 @@ from pathlib import Path
 from typing import Any, Protocol, TypeAlias
 
 
-class RunFailure(RuntimeError):
-    """An unrecoverable failure that ends an Agent Run."""
-
-
-class ToolFailure(ValueError):
-    """An expected Tool failure that the Agent can inspect."""
+@dataclass(frozen=True)
+class ToolOutput:
+    # The model-visible result of one Tool execution.
+    content: str
+    failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,7 +63,7 @@ class AssistantOutput:
     tool_calls: tuple[ToolCall, ...] = ()
 
 
-ToolHandler: TypeAlias = Callable[[object, Path], str]
+ToolHandler: TypeAlias = Callable[[object, Path], ToolOutput]
 
 
 @dataclass(frozen=True)
