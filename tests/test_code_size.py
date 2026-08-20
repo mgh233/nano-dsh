@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 
-SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
+SOURCE_ROOT = Path(__file__).resolve().parents[1] / "nano_dsh"
 
 
 def _code_lines(path: Path) -> int:

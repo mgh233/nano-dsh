@@ -16,9 +16,8 @@ from typing import Callable, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from nano_dsh.__main__ import main as nano_dsh_main
 

@@ -30,7 +30,7 @@ def _trace(category: str, message: str) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    profile = Path(__file__).resolve().parents[2] / "profiles/headless.toml"
+    profile = Path(__file__).resolve().parents[1] / "profiles/headless.toml"
     context = boot(profile, {"cmdline_args": args}, _trace)
     context.dispose()  # type: ignore[attr-defined]
 

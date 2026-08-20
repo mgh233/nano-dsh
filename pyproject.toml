@@ -13,4 +13,4 @@ dependencies = []
 nano-dsh = "nano_dsh.__main__:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+include = ["nano_dsh", "nano_dsh.*"]
