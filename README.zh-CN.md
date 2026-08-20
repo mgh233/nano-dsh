@@ -55,13 +55,13 @@ sequenceDiagram
 3. Profile 列出 [bundles/base.toml](bundles/base.toml) 和 [bundles/headless.toml](bundles/headless.toml)。[nano_dsh/loader.py](nano_dsh/loader.py) 按这个顺序读取它们，并导入每个 Plugin 模块。
 4. Context 为每个 Plugin 创建一个 Fiber。每个 Fiber 先输出 `PENDING`。只有所需的每个 Service 都可用时，Fiber 才变为 `ACTIVE`。正常顺序是 `sessions`、`agents`、`tools`、`bash`、`editor`、`deepseek`、`agent_loop`、`headless_startup` 和 `headless_runner`。
 5. `deepseek` 读取单行 key 文件，并提供 `llm`。当 `sessions`、`agents`、`tools` 和 `llm` 都存在时，[nano_dsh/plugins/agent_loop.py](nano_dsh/plugins/agent_loop.py) 激活。它注册一个 `AgentFactory`；此时还不会创建 Agent。
-6. [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py) 是 Driver。它调用 `agents.create(workspace).run(task)`。Factory 创建一个新的内存内 Session。
+6. [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py) 是 Driver。它先用 `llm.system_prompt` 和 User Task 开始 Execution Trace。然后调用 `agents.create(workspace).run(task)`。Factory 创建一个新的内存内 Session。
 7. Agent 追加一个用户 Session Event，并通过 [nano_dsh/plugins/deepseek.py](nano_dsh/plugins/deepseek.py) 发送 Model Step 1。模型可以返回 `str_replace_editor` 和 `bash` 的 Tool Call。
 8. [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py) 或 [nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py) 执行每个调用。可预期拒绝返回 `ToolOutput(content, failed=True)`。`ToolsService` 将它记录为 failed，并通过 `ToolResultEvent` 把 content 返回模型。
 9. 循环会发送后续的 Model Step。它包含先前的 assistant event 和 Tool Result。它在一个 Model Step 没有 Tool Call 时停止。它要求并返回 non-empty final content。
 10. `boot()` 成功后，`main()` 调用 `context.dispose()`。正常 cleanup 按反向顺序访问 Fiber 和 Effect。意外的 Boot、Plugin、cleanup、JSON、network、filesystem、encoding 或 subprocess timeout 错误会直接传播，并保留 Python 原始堆栈。
 
-这条 trace 有意保持简洁。它不会打印 API key 或 Reasoning Content。
+Execution Trace 从 System Prompt 开始。然后打印 User Task、Reasoning Content、assistant content、Tool Call、Tool Result 和 runtime event。tracing layer 不记录 Provider API key 或 HTTP header。Tool output 会原样打印。
 
 ## 2. 最少术语
 
@@ -89,7 +89,7 @@ sequenceDiagram
 
 - 文件：[nano_dsh/__main__.py](nano_dsh/__main__.py)、[nano_dsh/plugins/headless_startup.py](nano_dsh/plugins/headless_startup.py) 和 [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py)。
 - 输入：命令行任务、Workspace 路径和 API-key-file 路径。
-- 输出：标准输出中的 final assistant text，以及标准错误中的简洁 Execution Trace。
+- 输出：标准输出中的 final assistant text，以及标准错误中的完整 Execution Trace。
 - 为什么存在：这一层验证面向用户的输入，并启动恰好一次 headless Agent Run。Runner 是 Driver。只有组装过程提供了它需要的 Service 后，它才启动 Agent。
 
 ### 2. Boot 和 Bundle 组装
@@ -172,18 +172,33 @@ python -m unittest discover -v
 python examples/example.py --api-key-file .key
 ```
 
-成功执行时会输出：
+一个成功场景从下面的内容开始：
 
 ```text
+=== SYSTEM ===
+You are a coding agent. ...
+=== USER ===
+Correct the inventory availability calculation. ...
+=== REASONING ===
+...
+=== TOOL CALL ===
+...
+=== TOOL RESULT ===
+...
+=== ASSISTANT ===
+...
 logic-bug: PASS
-boundary-bug: PASS
-missing-implementation: PASS
-Summary: 3/3 PASS
+```
+
+三个 fixture 都会重复这个序列。最后一行是 `Summary: 3/3 PASS`。通过 `tee` 保存标准输出，就能得到完整轨迹：
+
+```bash
+python examples/example.py --api-key-file .key | tee example-output.log
 ```
 
 脚本对每个 fixture 只执行一次。它不会自动 retry。
 
-验证记录（2026-08-20）：本版离线测试通过 83/83，真实 API Live Acceptance 通过 3/3。生产 Python 包含 761 行非空、非注释代码。最大生产文件包含 140 行。仓库共有 34 个 Python 文件，AST `Raise`、`Try` 和 `TryStar` 节点都为零。
+验证记录（2026-08-20）：本版离线测试通过 84/84，真实 API Live Acceptance 通过 3/3。生产 Python 包含 812 行非空、非注释代码。最大生产文件包含 148 行。仓库共有 34 个 Python 文件，AST `Raise`、`Try` 和 `TryStar` 节点都为零。
 
 ## 6. 安全边界和失败行为
 
@@ -191,12 +206,13 @@ Summary: 3/3 PASS
 - 每次 Bash Tool Execution 都启动一个新的 `/bin/bash` 进程。shell state 不会持久化。它有 300 秒 timeout，以及 16,000 字符的 model-visible output limit。
 - `str_replace_editor` 只接受绝对路径。它会解析路径，并拒绝 Workspace 外的目标，包括 symbolic-link escape。这个路径限制不会 sandbox Bash。
 - `.key` 被 Git 忽略。Provider 将一个非空行读入内存。Bash 子进程环境会移除 `DEEPSEEK_API_KEY`。
+- Execution Trace 包含 Reasoning Content、Tool argument、Tool Result、command 和模型看见的 Workspace content。tracing layer 不记录 Provider API key 或 HTTP header。Tool 仍可能暴露它读到的 secret。
 - Provider request 或 live suite 没有 automatic retry。没有 Model Step cap。
 - 内部不变量使用简洁 `assert`。例如 Service Provider 唯一、AgentFactory 唯一、DeepSeek 响应形状正确，以及 final assistant content 非空。
 - 可预期 Tool 失败返回 `ToolOutput(content, failed=True)`。例如未知 Tool、非零 Bash exit 和被拒绝的 Editor 操作。`ToolsService` 将 content 写回模型，并记录 failed trace。
 - JSON、network、filesystem、encoding 和 subprocess timeout 错误不做包装。Python 会暴露原始堆栈。
 
-请为 live run 使用可丢弃的 Workspace。不要把 secret 或重要 host file 放在可信 Bash 进程可以访问的位置。
+请为 live run 使用可丢弃的 Workspace。不要把 secret 或重要 host file 放在 Bash 或 Execution Trace 可以暴露的位置。
 
 ## 7. 刻意未实现的内容
 

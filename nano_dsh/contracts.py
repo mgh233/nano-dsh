@@ -78,6 +78,8 @@ class ToolDefinition:
 class LLMProvider(Protocol):
     # Provider contract consumed by AgentLoop.
 
+    system_prompt: str
+
     def complete(
         self,
         events: Sequence[SessionEvent],

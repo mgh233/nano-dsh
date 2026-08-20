@@ -33,7 +33,7 @@ The first version includes:
 - Thinking Mode with `reasoning_effort = "high"`.
 - One-shot Bash Tool Executions.
 - The four-command `str_replace_editor`.
-- A concise user-visible Execution Trace.
+- A complete user-visible Execution Trace that starts with the System Prompt.
 - No explicit `raise`, `try`, or `except` statements in repository Python.
 
 The first version excludes:
@@ -102,6 +102,7 @@ PENDING
 
 - AgentLoop activation registers an AgentFactory.
 - AgentLoop activation does not create an Agent.
+- Headless Runner starts the Execution Trace from `llm.system_prompt`.
 - Headless Runner creates the Agent through the Agents Service.
 - Session Events remain independent from the DeepSeek wire format.
 - Assistant Session Events preserve Reasoning Content.
@@ -288,6 +289,7 @@ The offline suite covers:
 - Dynamic module loading.
 - Session-to-DeepSeek serialization.
 - Reasoning Content round-trip.
+- Complete Execution Trace ordering and tracing-layer secret exclusion.
 - Sequential Tool Calls.
 - Tool argument validation.
 - Bash timeout and output handling.
@@ -334,9 +336,9 @@ is not printed.
 
 Verification evidence recorded for this revision on 2026-08-20:
 
-- The offline suite passed 83/83 tests.
-- Production Python contained 761 non-empty, non-comment lines. The largest
-  production file contained 140 such lines.
+- The offline suite passed 84/84 tests.
+- Production Python contained 812 non-empty, non-comment lines. The largest
+  production file contained 148 such lines.
 - All 34 repository Python files contained zero AST `Raise`, `Try`, and
   `TryStar` nodes.
 - The real-API Live Acceptance suite passed all three scenarios.

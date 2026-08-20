@@ -32,6 +32,7 @@ class ScenarioResult:
     cli_code: int
     test_code: int
     response: str
+    trace: str
     passed: bool
 
 
@@ -94,6 +95,12 @@ def _completed_agent_trace(stderr: str) -> bool:
     return bool(later_steps) and "agent: run completed" in events[later_steps[0] :]
 
 
+def _agent_trace(stderr: str) -> str:
+    marker = "=== SYSTEM ==="
+    start = stderr.find(marker)
+    return stderr[start:].strip() if start >= 0 else ""
+
+
 def _run_scenario(
     fixture: Path,
     api_key_file: Path,
@@ -135,6 +142,7 @@ def _run_scenario(
         cli.returncode,
         tests.returncode,
         response,
+        _agent_trace(cli.stderr) if cli.returncode == 0 else "",
         passed,
     )
     if passed:
@@ -143,9 +151,11 @@ def _run_scenario(
 
 
 def _print_result(result: ScenarioResult) -> None:
-    print(f"{result.name}: {'PASS' if result.passed else 'FAIL'}")
-    if result.response:
+    if result.trace:
+        print(result.trace)
+    elif result.response:
         print(f"  Response: {result.response}")
+    print(f"{result.name}: {'PASS' if result.passed else 'FAIL'}")
     if not result.passed:
         print(
             f"  Exit codes: CLI={result.cli_code}, "

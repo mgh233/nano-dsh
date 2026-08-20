@@ -145,9 +145,25 @@ class LiveAcceptanceTests(unittest.TestCase):
                     command,
                     0,
                     "Fixed.\n",
+                    "fiber: hidden bootstrap\n"
+                    "=== SYSTEM ===\n"
+                    "system prompt\n"
+                    "=== USER ===\n"
+                    "task\n"
+                    "headless: run started\n"
+                    "agent: run started\n"
+                    "model: step 1 started\n"
+                    "=== REASONING ===\n"
+                    "thinking\n"
+                    "=== TOOL CALL ===\n"
+                    "name: str_replace_editor\n"
                     "tool: complete str_replace_editor\n"
                     "tool: complete bash\n"
+                    "=== TOOL RESULT ===\n"
+                    "tests passed\n"
                     "model: step 2 started\n"
+                    "=== ASSISTANT ===\n"
+                    "Fixed.\n"
                     "agent: run completed\n",
                 )
             return completed(command, 0, stderr="unittest details")
@@ -160,6 +176,16 @@ class LiveAcceptanceTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
         self.assertFalse(result.workspace.exists())
+        self.assertTrue(result.trace.startswith("=== SYSTEM ==="))
+        self.assertIn("=== REASONING ===\nthinking", result.trace)
+        self.assertIn("=== TOOL CALL ===", result.trace)
+        self.assertIn("=== TOOL RESULT ===", result.trace)
+        self.assertIn("=== ASSISTANT ===\nFixed.", result.trace)
+        self.assertNotIn("hidden bootstrap", result.trace)
+        output = StringIO()
+        with redirect_stdout(output):
+            example._print_result(result)
+        self.assertTrue(output.getvalue().startswith("=== SYSTEM ==="))
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][1], ROOT)
         self.assertEqual(calls[1][1], result.workspace)
@@ -237,11 +263,15 @@ class LiveAcceptanceTests(unittest.TestCase):
         self.assertEqual(result.test_code, 1)
         self.assertTrue(result.workspace.exists())
 
-    def test_output_omits_api_key_and_raw_stderr(self) -> None:
+    def test_failure_output_omits_raw_stderr(self) -> None:
         secret = "do-not-print-this-key"
 
         def run_process(command, cwd):
-            return completed(command, 1, stderr=secret)
+            return completed(
+                command,
+                1,
+                stderr=f"{secret}\n=== SYSTEM ===\nsystem prompt\n",
+            )
 
         result = example._run_scenario(
             self.fixture,
@@ -253,7 +283,8 @@ class LiveAcceptanceTests(unittest.TestCase):
             example._print_result(result)
 
         self.assertNotIn(secret, output.getvalue())
-        self.assertNotIn("stderr", output.getvalue())
+        self.assertNotIn("=== SYSTEM ===", output.getvalue())
+        self.assertTrue(output.getvalue().startswith("logic-bug: FAIL\n"))
 
     def test_suite_summary_and_exit_code(self) -> None:
         calls = 0

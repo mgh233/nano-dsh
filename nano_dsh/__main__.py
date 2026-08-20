@@ -5,7 +5,17 @@ import sys
 from pathlib import Path
 
 from nano_dsh.boot import boot
-from nano_dsh.contracts import CommandLineArgs
+from nano_dsh.contracts import CommandLineArgs, Trace
+
+
+TRANSCRIPT_CATEGORIES = {
+    "system",
+    "user",
+    "reasoning",
+    "assistant",
+    "tool_call",
+    "tool_result",
+}
 
 
 def _parse_args(argv: list[str] | None = None) -> CommandLineArgs:
@@ -24,14 +34,33 @@ def _parse_args(argv: list[str] | None = None) -> CommandLineArgs:
     )
 
 
-def _trace(category: str, message: str) -> None:
-    print(f"{category}: {message}", file=sys.stderr)
+def _make_trace() -> Trace:
+    started = False
+
+    def trace(category: str, message: str) -> None:
+        nonlocal started
+        if not started:
+            started = category == "system"
+            if not started:
+                return
+        if category in TRANSCRIPT_CATEGORIES:
+            if category != "system":
+                print(file=sys.stderr)
+            print(
+                f"=== {category.upper().replace('_', ' ')} ===",
+                file=sys.stderr,
+            )
+            print(message, file=sys.stderr)
+            return
+        print(f"{category}: {message}", file=sys.stderr)
+
+    return trace
 
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     profile = Path(__file__).resolve().parents[1] / "profiles/headless.toml"
-    context = boot(profile, {"cmdline_args": args}, _trace)
+    context = boot(profile, {"cmdline_args": args}, _make_trace())
     context.dispose()  # type: ignore[attr-defined]
 
 

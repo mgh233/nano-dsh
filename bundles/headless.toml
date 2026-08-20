@@ -6,4 +6,4 @@ inject = ["cmdline_args"]
 [[plugins]]
 id = "headless_runner"
 module = "nano_dsh.plugins.headless_runner"
-inject = ["headless_startup", "agents"]
+inject = ["headless_startup", "agents", "llm"]

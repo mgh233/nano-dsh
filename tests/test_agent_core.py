@@ -61,6 +61,8 @@ class FakeContext:
 
 
 class ScriptedProvider:
+    system_prompt = "test system prompt"
+
     def __init__(
         self,
         responses: Sequence[AssistantOutput],
@@ -383,7 +385,14 @@ class AgentLoopIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(
             {category for category, message in ctx.traces},
-            {"agent", "model", "tool"},
+            {"agent", "model", "tool", "tool_result"},
+        )
+        self.assertIn(
+            (
+                "tool_result",
+                "id: call-1\nname: record\ncontent:\nresult:first",
+            ),
+            ctx.traces,
         )
         self.assertNotIn("private reasoning", repr(ctx.traces))
 
@@ -618,6 +627,14 @@ class HeadlessFlowTests(unittest.TestCase):
                 if category == "headless"
             ],
             ["run started", "run completed"],
+        )
+        self.assertEqual(
+            ctx.traces[:3],
+            [
+                ("system", provider.system_prompt),
+                ("user", "inspect the workspace"),
+                ("headless", "run started"),
+            ],
         )
 
 
