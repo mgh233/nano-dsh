@@ -13,6 +13,7 @@ from nano_dsh.contracts import CommandLineArgs, PluginSpec
 from nano_dsh.cordis import Context
 from nano_dsh.loader import read_bundle, read_profile
 from nano_dsh.plugins import headless_runner, headless_startup
+from nano_dsh.plugins.deepseek import SYSTEM_PROMPT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,14 +122,106 @@ class HeadlessAppTests(unittest.TestCase):
         )
         self.assertIn("BASH:after", second_messages[-1]["content"])
 
-        trace = stderr.getvalue().splitlines()
-        self.assertTrue(all(": " in line for line in trace))
+        trace_text = stderr.getvalue()
+        trace = trace_text.splitlines()
+        self.assertTrue(trace_text.startswith("=== SYSTEM ==="))
         self.assertIn("headless: run started", trace)
         self.assertIn("headless: run completed", trace)
-        self.assertEqual(sum(line.endswith("-> ACTIVE") for line in trace), 9)
         self.assertEqual(sum(line.endswith("ACTIVE -> PENDING") for line in trace), 9)
-        self.assertNotIn(TEST_KEY, stderr.getvalue())
-        self.assertNotIn(REASONING, stderr.getvalue())
+        self.assertIn(f"=== SYSTEM ===\n{SYSTEM_PROMPT}", trace_text)
+        self.assertIn("=== USER ===\nfix target.txt", trace_text)
+        self.assertIn(f"=== REASONING ===\n{REASONING}", trace_text)
+        self.assertEqual(trace_text.count("=== TOOL CALL ==="), 2)
+        self.assertIn(
+            "id: edit-1\n"
+            "name: str_replace_editor\n"
+            "arguments:\n",
+            trace_text,
+        )
+        self.assertIn(f'"path": "{self.target}"', trace_text)
+        self.assertIn(
+            "id: bash-1\n"
+            "name: bash\n"
+            "arguments:\n",
+            trace_text,
+        )
+        self.assertIn("printf 'BASH:%s'", trace_text)
+        self.assertEqual(trace_text.count("=== TOOL RESULT ==="), 2)
+        self.assertIn(
+            "id: edit-1\n"
+            "name: str_replace_editor\n"
+            "content:\n",
+            trace_text,
+        )
+        self.assertIn(
+            "id: bash-1\n"
+            "name: bash\n"
+            "content:\nBASH:after",
+            trace_text,
+        )
+        self.assertIn(f"=== ASSISTANT ===\n{FINAL}", trace_text)
+        self.assertNotIn(TEST_KEY, trace_text)
+        self.assertNotIn("Authorization", trace_text)
+        self.assertNotIn("Content-Type", trace_text)
+
+        expected_order = (
+            f"=== SYSTEM ===\n{SYSTEM_PROMPT}",
+            "=== USER ===\nfix target.txt",
+            "headless: run started",
+            "agent: run started",
+            "model: step 1 started",
+            "model: request",
+            "model: response",
+            f"=== REASONING ===\n{REASONING}",
+            "=== TOOL CALL ===\n"
+            "id: edit-1\n"
+            "name: str_replace_editor\n"
+            "arguments:\n",
+            "=== TOOL CALL ===\n"
+            "id: bash-1\n"
+            "name: bash\n"
+            "arguments:\n",
+            "model: step 1 completed",
+            "tool: execute str_replace_editor",
+            "tool: complete str_replace_editor",
+            "=== TOOL RESULT ===\n"
+            "id: edit-1\n"
+            "name: str_replace_editor\n"
+            "content:\n",
+            "tool: execute bash",
+            "tool: complete bash",
+            "=== TOOL RESULT ===\n"
+            "id: bash-1\n"
+            "name: bash\n"
+            "content:\n",
+            "model: step 2 started",
+            "model: request",
+            "model: response",
+            f"=== ASSISTANT ===\n{FINAL}",
+            "model: step 2 completed",
+            "agent: run completed",
+            "headless: run completed",
+            "fiber: headless_runner: LOADING -> ACTIVE",
+            "fiber: headless_runner: ACTIVE -> PENDING",
+            "service: headless_startup: removed",
+            "fiber: headless_startup: ACTIVE -> PENDING",
+            "fiber: agent_loop: ACTIVE -> PENDING",
+            "service: llm: removed",
+            "fiber: deepseek: ACTIVE -> PENDING",
+            "fiber: editor: ACTIVE -> PENDING",
+            "fiber: bash: ACTIVE -> PENDING",
+            "service: tools: removed",
+            "fiber: tools: ACTIVE -> PENDING",
+            "service: agents: removed",
+            "fiber: agents: ACTIVE -> PENDING",
+            "service: sessions: removed",
+            "fiber: sessions: ACTIVE -> PENDING",
+        )
+        cursor = 0
+        for event in expected_order:
+            position = trace_text.find(event, cursor)
+            self.assertGreaterEqual(position, 0, event)
+            cursor = position + len(event)
 
     def test_profile_has_exact_order_and_configuration(self) -> None:
         profile = read_profile(PROFILE)
@@ -169,7 +262,7 @@ class HeadlessAppTests(unittest.TestCase):
                 ("cmdline_args",),
                 ("sessions", "agents", "tools", "llm"),
                 ("cmdline_args",),
-                ("headless_startup", "agents"),
+                ("headless_startup", "agents", "llm"),
             ],
         )
         self.assertEqual(specs[5].config, {

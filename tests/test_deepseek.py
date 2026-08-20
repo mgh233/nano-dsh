@@ -129,6 +129,7 @@ class DeepSeekProviderTests(unittest.TestCase):
                 {"role": "user", "content": "fix it"},
             ],
         )
+        self.assertEqual(provider.system_prompt, body["messages"][0]["content"])
         self.assertEqual(
             body["tools"],
             [
@@ -147,10 +148,12 @@ class DeepSeekProviderTests(unittest.TestCase):
             [
                 ("model", "request"),
                 ("model", "response"),
+                ("reasoning", "private"),
+                ("assistant", "done"),
             ],
         )
         self.assertNotIn(TEST_KEY, repr(traces))
-        self.assertNotIn("private", repr(traces))
+        self.assertIn("private", repr(traces))
         self.assertNotIn("fix it", repr(traces))
 
     def test_serializes_complete_event_sequence_and_reasoning(self) -> None:
@@ -243,6 +246,23 @@ class DeepSeekProviderTests(unittest.TestCase):
         self.assertEqual(output.content, "final")
         self.assertEqual(output.reasoning_content, "thought")
         self.assertEqual(output.tool_calls, ())
+
+    def test_trace_omits_empty_assistant_sections(self) -> None:
+        traces: list[tuple[str, str]] = []
+        provider = DeepSeekProvider(
+            TEST_KEY,
+            transport=RecordingTransport(
+                _response(content="", reasoning="")
+            ),
+            trace=lambda *entry: traces.append(entry),
+        )
+
+        provider.complete([], [])
+
+        self.assertEqual(
+            traces,
+            [("model", "request"), ("model", "response")],
+        )
 
     def test_rejects_falsey_non_list_tool_calls(self) -> None:
         for raw_calls in ("", {}, 0):
