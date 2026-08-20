@@ -37,14 +37,14 @@ sequenceDiagram
 
 下面用具体代码位置重述同一条执行链。
 
-1. CLI 在 [src/nano_dsh/__main__.py](src/nano_dsh/__main__.py) 中解析 `task`、`--workspace` 和 `--api-key-file`。它解析路径，并创建 `CommandLineArgs`。
-2. `main()` 将 `cmdline_args` 作为 root Service 传给 [src/nano_dsh/boot.py](src/nano_dsh/boot.py)。它选择 [profiles/headless.toml](profiles/headless.toml)。
-3. Profile 列出 [bundles/base.toml](bundles/base.toml) 和 [bundles/headless.toml](bundles/headless.toml)。[src/nano_dsh/loader.py](src/nano_dsh/loader.py) 按这个顺序读取它们，并导入每个 Plugin 模块。
+1. CLI 在 [nano_dsh/__main__.py](nano_dsh/__main__.py) 中解析 `task`、`--workspace` 和 `--api-key-file`。它解析路径，并创建 `CommandLineArgs`。
+2. `main()` 将 `cmdline_args` 作为 root Service 传给 [nano_dsh/boot.py](nano_dsh/boot.py)。它选择 [profiles/headless.toml](profiles/headless.toml)。
+3. Profile 列出 [bundles/base.toml](bundles/base.toml) 和 [bundles/headless.toml](bundles/headless.toml)。[nano_dsh/loader.py](nano_dsh/loader.py) 按这个顺序读取它们，并导入每个 Plugin 模块。
 4. Context 为每个 Plugin 创建一个 Fiber。每个 Fiber 先输出 `PENDING`。只有所需的每个 Service 都可用时，Fiber 才变为 `ACTIVE`。正常顺序是 `sessions`、`agents`、`tools`、`bash`、`editor`、`deepseek`、`agent_loop`、`headless_startup` 和 `headless_runner`。
-5. `deepseek` 读取单行 key 文件，并提供 `llm`。当 `sessions`、`agents`、`tools` 和 `llm` 都存在时，[src/nano_dsh/plugins/agent_loop.py](src/nano_dsh/plugins/agent_loop.py) 激活。它注册一个 `AgentFactory`；此时还不会创建 Agent。
-6. [src/nano_dsh/plugins/headless_runner.py](src/nano_dsh/plugins/headless_runner.py) 是 Driver。它调用 `agents.create(workspace).run(task)`。Factory 创建一个新的内存内 Session。
-7. Agent 追加一个用户 Session Event，并通过 [src/nano_dsh/plugins/deepseek.py](src/nano_dsh/plugins/deepseek.py) 发送 Model Step 1。模型可以返回 `str_replace_editor` 和 `bash` 的 Tool Call。
-8. [src/nano_dsh/plugins/editor.py](src/nano_dsh/plugins/editor.py) 或 [src/nano_dsh/plugins/bash.py](src/nano_dsh/plugins/bash.py) 执行每个调用。[src/nano_dsh/plugins/tools.py](src/nano_dsh/plugins/tools.py) 将预期的 Tool Failure 转换成模型可见的 Tool Result。Agent 将每个结果追加为 `ToolResultEvent`。
+5. `deepseek` 读取单行 key 文件，并提供 `llm`。当 `sessions`、`agents`、`tools` 和 `llm` 都存在时，[nano_dsh/plugins/agent_loop.py](nano_dsh/plugins/agent_loop.py) 激活。它注册一个 `AgentFactory`；此时还不会创建 Agent。
+6. [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py) 是 Driver。它调用 `agents.create(workspace).run(task)`。Factory 创建一个新的内存内 Session。
+7. Agent 追加一个用户 Session Event，并通过 [nano_dsh/plugins/deepseek.py](nano_dsh/plugins/deepseek.py) 发送 Model Step 1。模型可以返回 `str_replace_editor` 和 `bash` 的 Tool Call。
+8. [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py) 或 [nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py) 执行每个调用。[nano_dsh/plugins/tools.py](nano_dsh/plugins/tools.py) 将预期的 Tool Failure 转换成模型可见的 Tool Result。Agent 将每个结果追加为 `ToolResultEvent`。
 9. 循环会发送后续的 Model Step。它包含先前的 assistant event 和 Tool Result。循环持续到 Provider 返回非空的 final text。该文本写到标准输出。
 10. `boot()` 成功返回 Context 后，`main()` 的下一条语句会直接调用 `context.dispose()`。如果 Boot 或 Plugin activation 在返回前失败，`boot()` 自己会清理 Context 并重新抛出异常。两条清理路径都会让 Fiber 按创建顺序的反向清理。它们的 Effect 会移除 AgentFactory、Tool 注册和归 Fiber 所有的 Service。
 
@@ -74,35 +74,35 @@ sequenceDiagram
 
 ### 1. Apps
 
-- 文件：[src/nano_dsh/__main__.py](src/nano_dsh/__main__.py)、[src/nano_dsh/plugins/headless_startup.py](src/nano_dsh/plugins/headless_startup.py) 和 [src/nano_dsh/plugins/headless_runner.py](src/nano_dsh/plugins/headless_runner.py)。
+- 文件：[nano_dsh/__main__.py](nano_dsh/__main__.py)、[nano_dsh/plugins/headless_startup.py](nano_dsh/plugins/headless_startup.py) 和 [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py)。
 - 输入：命令行任务、Workspace 路径和 API-key-file 路径。
 - 输出：标准输出中的 final assistant text，以及标准错误中的简洁 Execution Trace。
 - 为什么存在：这一层验证面向用户的输入，并启动恰好一次 headless Agent Run。Runner 是 Driver。只有组装过程提供了它需要的 Service 后，它才启动 Agent。
 
 ### 2. Boot 和 Bundle 组装
 
-- 文件：[src/nano_dsh/boot.py](src/nano_dsh/boot.py)、[src/nano_dsh/loader.py](src/nano_dsh/loader.py)、[profiles/headless.toml](profiles/headless.toml)、[bundles/base.toml](bundles/base.toml) 和 [bundles/headless.toml](bundles/headless.toml)。
+- 文件：[nano_dsh/boot.py](nano_dsh/boot.py)、[nano_dsh/loader.py](nano_dsh/loader.py)、[profiles/headless.toml](profiles/headless.toml)、[bundles/base.toml](bundles/base.toml) 和 [bundles/headless.toml](bundles/headless.toml)。
 - 输入：root Service 和被选中的 Profile。
 - 输出：一个已组装的 Context。所有启用的 Fiber 都是 `ACTIVE`；否则会得到可见的 `RunFailure`。
 - 为什么存在：它让应用组装是声明式的。它也展示 Bundle 给出创建顺序，而 Service 可用性给出激活顺序。
 
 ### 3. Cordis runtime
 
-- 文件：[src/nano_dsh/cordis.py](src/nano_dsh/cordis.py) 和 [src/nano_dsh/contracts.py](src/nano_dsh/contracts.py)。
+- 文件：[nano_dsh/cordis.py](nano_dsh/cordis.py) 和 [nano_dsh/contracts.py](nano_dsh/contracts.py)。
 - 输入：Plugin Specification、所需 Service 名称和 Plugin `apply` 函数。
 - 输出：active Fiber、已发布的 Service 和归 Fiber 所有的清理动作。
 - 为什么存在：这是最小的动态生命周期。Consumer 可以保持 `PENDING`，在 Provider 到来时激活，在该 Service 消失时回到 `PENDING`，并在它返回时重新激活。
 
 ### 4. Agent core
 
-- 文件：[src/nano_dsh/plugins/agents.py](src/nano_dsh/plugins/agents.py)、[src/nano_dsh/plugins/sessions.py](src/nano_dsh/plugins/sessions.py)、[src/nano_dsh/plugins/tools.py](src/nano_dsh/plugins/tools.py)、[src/nano_dsh/plugins/agent_loop.py](src/nano_dsh/plugins/agent_loop.py)、[src/nano_dsh/plugins/bash.py](src/nano_dsh/plugins/bash.py) 和 [src/nano_dsh/plugins/editor.py](src/nano_dsh/plugins/editor.py)。
+- 文件：[nano_dsh/plugins/agents.py](nano_dsh/plugins/agents.py)、[nano_dsh/plugins/sessions.py](nano_dsh/plugins/sessions.py)、[nano_dsh/plugins/tools.py](nano_dsh/plugins/tools.py)、[nano_dsh/plugins/agent_loop.py](nano_dsh/plugins/agent_loop.py)、[nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py) 和 [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py)。
 - 输入：任务、Workspace、`llm` Service 和已注册的 Tool definition。
 - 输出：一个 append-only Session 和最终 assistant response。预期的 Tool Failure 会成为后续 Model Step 的 Tool Result。
 - 为什么存在：这一层让 AgentFactory 注册与 Agent 创建分离。它也让顺序 Tool 执行和 Session state 独立于 Provider wire format。
 
 ### 5. Provider
 
-- 文件：[src/nano_dsh/plugins/deepseek.py](src/nano_dsh/plugins/deepseek.py)。
+- 文件：[nano_dsh/plugins/deepseek.py](nano_dsh/plugins/deepseek.py)。
 - 输入：Session Event、Tool definition 和单行 API key。
 - 输出：归一化的 assistant output。它包含 final content、可选的 Reasoning Content 和零个或多个 Tool Call。
 - 为什么存在：这是 Agent core 与 DeepSeek Chat Completions protocol 之间的边界。它跨含 Tool 的 Model Step 保留 Reasoning Content，但不让 core 依赖 protocol message。
