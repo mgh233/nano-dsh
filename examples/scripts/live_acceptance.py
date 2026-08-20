@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -24,9 +24,9 @@ from nano_dsh.__main__ import main as nano_dsh_main
 
 
 FIXTURES = (
-    ROOT / "fixtures/logic-bug",
-    ROOT / "fixtures/boundary-bug",
-    ROOT / "fixtures/missing-implementation",
+    ROOT / "examples/fixtures/logic-bug",
+    ROOT / "examples/fixtures/boundary-bug",
+    ROOT / "examples/fixtures/missing-implementation",
 )
 TASK_OBJECTIVES = {
     "logic-bug": "Correct the inventory availability calculation.",
