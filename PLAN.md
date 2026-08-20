@@ -156,7 +156,7 @@ nano-dsh/
 ├── profiles/headless.toml
 ├── bundles/base.toml
 ├── bundles/headless.toml
-├── src/nano_dsh/
+├── nano_dsh/
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── boot.py
@@ -227,39 +227,39 @@ No branch is squashed.
 
 ### `feat/runtime-fiber-lifecycle`
 
-- `src/nano_dsh/cordis.py`
+- `nano_dsh/cordis.py`
 - Runtime tests.
 
 ### `feat/profile-loader`
 
-- `src/nano_dsh/loader.py`
-- `src/nano_dsh/boot.py`
+- `nano_dsh/loader.py`
+- `nano_dsh/boot.py`
 - Loader and Boot tests.
 
 ### `feat/agent-core`
 
-- `src/nano_dsh/plugins/agents.py`
-- `src/nano_dsh/plugins/sessions.py`
-- `src/nano_dsh/plugins/tools.py`
-- `src/nano_dsh/plugins/agent_loop.py`
+- `nano_dsh/plugins/agents.py`
+- `nano_dsh/plugins/sessions.py`
+- `nano_dsh/plugins/tools.py`
+- `nano_dsh/plugins/agent_loop.py`
 - Core tests and the Scripted Provider integration path.
 
 ### `feat/coding-tools`
 
-- `src/nano_dsh/plugins/bash.py`
-- `src/nano_dsh/plugins/editor.py`
+- `nano_dsh/plugins/bash.py`
+- `nano_dsh/plugins/editor.py`
 - Tool tests.
 
 ### `feat/deepseek-provider`
 
-- `src/nano_dsh/plugins/deepseek.py`
+- `nano_dsh/plugins/deepseek.py`
 - Provider serialization and response tests.
 
 ### `feat/headless-app`
 
-- `src/nano_dsh/__main__.py`
-- `src/nano_dsh/plugins/headless_startup.py`
-- `src/nano_dsh/plugins/headless_runner.py`
+- `nano_dsh/__main__.py`
+- `nano_dsh/plugins/headless_startup.py`
+- `nano_dsh/plugins/headless_runner.py`
 - Profiles and Bundles.
 - App integration tests.
 

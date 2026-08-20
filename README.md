@@ -37,14 +37,14 @@ sequenceDiagram
 
 Here is the same trace with concrete code locations.
 
-1. The CLI parses `task`, `--workspace`, and `--api-key-file` in [src/nano_dsh/__main__.py](src/nano_dsh/__main__.py). It resolves the paths and creates `CommandLineArgs`.
-2. `main()` passes `cmdline_args` as a root Service to [src/nano_dsh/boot.py](src/nano_dsh/boot.py). It selects [profiles/headless.toml](profiles/headless.toml).
-3. The Profile lists [bundles/base.toml](bundles/base.toml) and [bundles/headless.toml](bundles/headless.toml). [src/nano_dsh/loader.py](src/nano_dsh/loader.py) reads them in that order and imports each Plugin module.
+1. The CLI parses `task`, `--workspace`, and `--api-key-file` in [nano_dsh/__main__.py](nano_dsh/__main__.py). It resolves the paths and creates `CommandLineArgs`.
+2. `main()` passes `cmdline_args` as a root Service to [nano_dsh/boot.py](nano_dsh/boot.py). It selects [profiles/headless.toml](profiles/headless.toml).
+3. The Profile lists [bundles/base.toml](bundles/base.toml) and [bundles/headless.toml](bundles/headless.toml). [nano_dsh/loader.py](nano_dsh/loader.py) reads them in that order and imports each Plugin module.
 4. The Context creates one Fiber per Plugin. Each Fiber first emits `PENDING`. A Fiber becomes `ACTIVE` only after every required Service is available. The normal order is `sessions`, `agents`, `tools`, `bash`, `editor`, `deepseek`, `agent_loop`, `headless_startup`, and `headless_runner`.
-5. `deepseek` reads the one-line key file and provides `llm`. Once `sessions`, `agents`, `tools`, and `llm` exist, [src/nano_dsh/plugins/agent_loop.py](src/nano_dsh/plugins/agent_loop.py) activates. It registers an `AgentFactory`; it does not yet create an Agent.
-6. [src/nano_dsh/plugins/headless_runner.py](src/nano_dsh/plugins/headless_runner.py) is the Driver. It calls `agents.create(workspace).run(task)`. The factory creates a new in-memory Session.
-7. The Agent appends a user Session Event and sends Model Step 1 through [src/nano_dsh/plugins/deepseek.py](src/nano_dsh/plugins/deepseek.py). The model can return Tool Calls for `str_replace_editor` and `bash`.
-8. [src/nano_dsh/plugins/editor.py](src/nano_dsh/plugins/editor.py) or [src/nano_dsh/plugins/bash.py](src/nano_dsh/plugins/bash.py) executes each call. [src/nano_dsh/plugins/tools.py](src/nano_dsh/plugins/tools.py) converts an expected Tool Failure into a model-visible Tool Result. The Agent appends each result as a `ToolResultEvent`.
+5. `deepseek` reads the one-line key file and provides `llm`. Once `sessions`, `agents`, `tools`, and `llm` exist, [nano_dsh/plugins/agent_loop.py](nano_dsh/plugins/agent_loop.py) activates. It registers an `AgentFactory`; it does not yet create an Agent.
+6. [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py) is the Driver. It calls `agents.create(workspace).run(task)`. The factory creates a new in-memory Session.
+7. The Agent appends a user Session Event and sends Model Step 1 through [nano_dsh/plugins/deepseek.py](nano_dsh/plugins/deepseek.py). The model can return Tool Calls for `str_replace_editor` and `bash`.
+8. [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py) or [nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py) executes each call. [nano_dsh/plugins/tools.py](nano_dsh/plugins/tools.py) converts an expected Tool Failure into a model-visible Tool Result. The Agent appends each result as a `ToolResultEvent`.
 9. The loop sends a later Model Step with the earlier assistant event and Tool Results. It repeats until the provider returns non-empty final text. That text goes to standard output.
 10. After `boot()` succeeds and returns the Context, the next statement in `main()` calls `context.dispose()` directly. If Boot or Plugin activation fails before that return, `boot()` itself disposes the Context and re-raises. In either cleanup path, Fibers clean up in reverse creation order. Their Effects remove the AgentFactory, Tool registrations, and Fiber-owned Services.
 
@@ -74,35 +74,35 @@ Read one layer at a time. Each layer answers a different question.
 
 ### 1. Apps
 
-- Files: [src/nano_dsh/__main__.py](src/nano_dsh/__main__.py), [src/nano_dsh/plugins/headless_startup.py](src/nano_dsh/plugins/headless_startup.py), and [src/nano_dsh/plugins/headless_runner.py](src/nano_dsh/plugins/headless_runner.py).
+- Files: [nano_dsh/__main__.py](nano_dsh/__main__.py), [nano_dsh/plugins/headless_startup.py](nano_dsh/plugins/headless_startup.py), and [nano_dsh/plugins/headless_runner.py](nano_dsh/plugins/headless_runner.py).
 - Input: command-line task, Workspace path, and API-key-file path.
 - Output: final assistant text on standard output and a concise Execution Trace on standard error.
 - Why it exists: this layer validates user-facing input and starts exactly one headless Agent Run. The Runner is a Driver. It starts the Agent only after assembly supplies its required Services.
 
 ### 2. Boot and Bundle composition
 
-- Files: [src/nano_dsh/boot.py](src/nano_dsh/boot.py), [src/nano_dsh/loader.py](src/nano_dsh/loader.py), [profiles/headless.toml](profiles/headless.toml), [bundles/base.toml](bundles/base.toml), and [bundles/headless.toml](bundles/headless.toml).
+- Files: [nano_dsh/boot.py](nano_dsh/boot.py), [nano_dsh/loader.py](nano_dsh/loader.py), [profiles/headless.toml](profiles/headless.toml), [bundles/base.toml](bundles/base.toml), and [bundles/headless.toml](bundles/headless.toml).
 - Input: root Services and the selected Profile.
 - Output: an assembled Context in which every enabled Fiber is `ACTIVE`, or a visible `RunFailure`.
 - Why it exists: it makes application composition declarative. It also shows that a Bundle gives creation order while Service availability gives activation order.
 
 ### 3. Cordis runtime
 
-- Files: [src/nano_dsh/cordis.py](src/nano_dsh/cordis.py) and [src/nano_dsh/contracts.py](src/nano_dsh/contracts.py).
+- Files: [nano_dsh/cordis.py](nano_dsh/cordis.py) and [nano_dsh/contracts.py](nano_dsh/contracts.py).
 - Input: Plugin Specifications, required Service names, and Plugin `apply` functions.
 - Output: active Fibers, published Services, and Fiber-owned cleanup.
 - Why it exists: this is the minimal dynamic lifecycle. A Consumer can remain `PENDING`, activate when a Provider arrives, return to `PENDING` if that Service disappears, and reactivate when it returns.
 
 ### 4. Agent core
 
-- Files: [src/nano_dsh/plugins/agents.py](src/nano_dsh/plugins/agents.py), [src/nano_dsh/plugins/sessions.py](src/nano_dsh/plugins/sessions.py), [src/nano_dsh/plugins/tools.py](src/nano_dsh/plugins/tools.py), [src/nano_dsh/plugins/agent_loop.py](src/nano_dsh/plugins/agent_loop.py), [src/nano_dsh/plugins/bash.py](src/nano_dsh/plugins/bash.py), and [src/nano_dsh/plugins/editor.py](src/nano_dsh/plugins/editor.py).
+- Files: [nano_dsh/plugins/agents.py](nano_dsh/plugins/agents.py), [nano_dsh/plugins/sessions.py](nano_dsh/plugins/sessions.py), [nano_dsh/plugins/tools.py](nano_dsh/plugins/tools.py), [nano_dsh/plugins/agent_loop.py](nano_dsh/plugins/agent_loop.py), [nano_dsh/plugins/bash.py](nano_dsh/plugins/bash.py), and [nano_dsh/plugins/editor.py](nano_dsh/plugins/editor.py).
 - Input: a task, a Workspace, an `llm` Service, and registered Tool definitions.
 - Output: an append-only Session and a final assistant response. Expected Tool Failures become Tool Results for a later Model Step.
 - Why it exists: this layer keeps AgentFactory registration separate from Agent creation. It also keeps sequential Tool execution and Session state independent from the provider wire format.
 
 ### 5. Provider
 
-- File: [src/nano_dsh/plugins/deepseek.py](src/nano_dsh/plugins/deepseek.py).
+- File: [nano_dsh/plugins/deepseek.py](nano_dsh/plugins/deepseek.py).
 - Input: Session Events, Tool definitions, and the one-line API key.
 - Output: normalized assistant output with final content, optional Reasoning Content, and zero or more Tool Calls.
 - Why it exists: this is the boundary between the Agent core and the DeepSeek Chat Completions protocol. It preserves Reasoning Content across Tool-using Model Steps without making the core depend on protocol messages.
