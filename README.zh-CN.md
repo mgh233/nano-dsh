@@ -1,21 +1,6 @@
-# nano-dsh 读者指南
+# Nano-dsh 读者指南
 
 nano-dsh 是一个小型、同步的教学 harness。它展示了一个 CLI 任务如何经过动态 Plugin、真实 Tool 和 DeepSeek Model Step，成为一次 Agent Run。
-
-先从头到尾读一遍本指南。之后按五层顺序阅读代码。
-
-## 0. 原始 Harness 与教学路径
-
-下表给出直接的教学路径。nano-dsh 保留可见的控制流，并省略无助于解释该路径的 production machinery。
-
-| 层 | 原始 DeepSeek Harness | nano-dsh 教学路径 |
-| --- | --- | --- |
-| Apps | Production CLI 和应用界面。 | 一个 headless CLI Driver。没有 Web UI 或 session persistence。 |
-| Boot / Profile / Loader | Production Profile 组装和 Loader machinery。 | 有序 TOML Profile 和 Bundle 直接加载 Plugin module。没有 Profile Patch overlay 或 hot reload。 |
-| Cordis | 具有 production scope 和 asynchronous lifecycle machinery 的动态 Plugin runtime。 | 一个同步 Context，包含 Fiber、Service、Effect、pending Consumer、移除和重新激活。没有 scope、async lifecycle 或 transactional rollback。 |
-| Agent core | Production Agent、Session 和 Tool 组装。 | 一个 AgentFactory、一个内存内 Session 和顺序 Tool Call。没有 multi-Agent execution、Skill、Memory 或 Workspace-instruction loading。 |
-| DeepSeek Provider / tools | Production Provider 和 Tool integration。 | 一个非 streaming Chat Completions Provider，加上 Bash 和 Editor。没有 retry、streaming、persistent shell 或 operating-system sandbox。 |
-| 失败控制流 | Production 各层会转换并恢复部分错误。 | 教学代码没有显式 `raise`、`try` 或 `except` 语句。内部契约使用 `assert`。可预期 Tool 失败使用 `ToolOutput`。其他错误保留 Python 原始堆栈。 |
 
 ## 1. 一次完整的 Agent Run
 
@@ -65,8 +50,6 @@ Execution Trace 从 System Prompt 开始。然后打印 User Task、Reasoning Co
 
 ## 2. 最少术语
 
-阅读时使用这些定义。[CONTEXT.md](CONTEXT.md) 是规范术语表。
-
 | 术语 | 在 nano-dsh 中的含义 |
 | --- | --- |
 | Profile | 选择有序 Bundle 列表的 TOML 文件。headless Profile 是 [profiles/headless.toml](profiles/headless.toml)。 |
@@ -78,8 +61,6 @@ Execution Trace 从 System Prompt 开始。然后打印 User Task、Reasoning Co
 | Session Event | 一个有类型的内存内记录。它可以是用户输入、assistant 输出或 Tool Result。 |
 | Provider | 提供一个 Service 的 Plugin。DeepSeek Provider 提供 `llm`。 |
 | Tool Call | 模型发出的请求。它有 Tool 名称和 JSON 参数。它会成为 Tool Execution，再成为 Tool Result。 |
-
-不要合并这些概念。Fiber 变为 active 不等于 Agent Run。注册 AgentFactory 不等于创建 Agent。failed Tool Output 仍是模型可见的 Tool Result。
 
 ## 3. 按五层阅读代码
 
@@ -120,8 +101,6 @@ Execution Trace 从 System Prompt 开始。然后打印 User Task、Reasoning Co
 - 输出：归一化的 assistant output。它包含 final content、可选的 Reasoning Content 和零个或多个 Tool Call。
 - 为什么存在：这是 Agent core 与 DeepSeek Chat Completions protocol 之间的边界。它跨含 Tool 的 Model Step 保留 Reasoning Content，但不让 core 依赖 protocol message。
 
-完成这一轮后，请读离线集成测试 [tests/test_headless_app.py](tests/test_headless_app.py)。它使用 scripted transport，在没有网络请求时展示同一个生命周期。
-
 ## 4. 快速开始
 
 要求：Python 3.12 和一个 DeepSeek API key。生产代码除了 Python 标准库外没有运行时依赖。
@@ -150,19 +129,7 @@ nano-dsh "Inspect the Workspace and describe its files." --workspace "$PWD/../na
 
 CLI 自己选择 headless Profile。你不传入 Profile 参数。`--workspace` 必须是一个已存在的目录。默认 Workspace 是当前目录。默认 API-key file 是当前目录中的 `.key`。
 
-## 5. 用两种方式测试
-
-### 完整离线 unit test suite
-
-无需 API key 或网络访问，运行：
-
-```bash
-python -m unittest discover -v
-```
-
-这个 suite 验证 Fiber lifecycle、动态加载、反向 Effect cleanup、Session serialization、Reasoning Content round-trip、有序 Tool Call、Editor confinement、Bash behavior，以及完整的 scripted headless Agent Run。
-
-### 三 fixture 的 Live Acceptance Suite
+## 5. 测试
 
 仓库已包含 Live Acceptance Suite。它使用三个可丢弃的 Bug Fixture：一个 logic error、一个 boundary error 和一个 missing implementation。要满足验收要求，每次 run 都必须使用真实 DeepSeek API，同时调用 `str_replace_editor` 和 `bash`，把 Tool Result 返回给后续 Model Step，通过 fixture 的 `unittest` suite，并以 final assistant text 结束。
 
@@ -198,48 +165,15 @@ python examples/example.py --api-key-file .key | tee example-output.log
 
 脚本对每个 fixture 只执行一次。它不会自动 retry。
 
-验证记录（2026-08-20）：本版离线测试通过 84/84，真实 API Live Acceptance 通过 3/3。生产 Python 包含 812 行非空、非注释代码。最大生产文件包含 148 行。仓库共有 34 个 Python 文件，AST `Raise`、`Try` 和 `TryStar` 节点都为零。
+## 引用
 
-## 6. 安全边界和失败行为
+如果这个仓库对你的工作有帮助，请使用以下 BibTeX 引用：
 
-- Bash 是 trusted local capability。它从所选 Workspace 启动，但不是 operating-system sandbox。它可以访问该进程通常可访问的 host resource。
-- 每次 Bash Tool Execution 都启动一个新的 `/bin/bash` 进程。shell state 不会持久化。它有 300 秒 timeout，以及 16,000 字符的 model-visible output limit。
-- `str_replace_editor` 只接受绝对路径。它会解析路径，并拒绝 Workspace 外的目标，包括 symbolic-link escape。这个路径限制不会 sandbox Bash。
-- `.key` 被 Git 忽略。Provider 将一个非空行读入内存。Bash 子进程环境会移除 `DEEPSEEK_API_KEY`。
-- Execution Trace 包含 Reasoning Content、Tool argument、Tool Result、command 和模型看见的 Workspace content。tracing layer 不记录 Provider API key 或 HTTP header。Tool 仍可能暴露它读到的 secret。
-- Provider request 或 live suite 没有 automatic retry。没有 Model Step cap。
-- 内部不变量使用简洁 `assert`。例如 Service Provider 唯一、AgentFactory 唯一、DeepSeek 响应形状正确，以及 final assistant content 非空。
-- 可预期 Tool 失败返回 `ToolOutput(content, failed=True)`。例如未知 Tool、非零 Bash exit 和被拒绝的 Editor 操作。`ToolsService` 将 content 写回模型，并记录 failed trace。
-- JSON、network、filesystem、encoding 和 subprocess timeout 错误不做包装。Python 会暴露原始堆栈。
-
-请为 live run 使用可丢弃的 Workspace。不要把 secret 或重要 host file 放在 Bash 或 Execution Trace 可以暴露的位置。
-
-## 7. 刻意未实现的内容
-
-nano-dsh 保持教学链足够小。它刻意不包含：
-
-- Web UI 和 session persistence。
-- Scope isolation 和 multi-Agent execution。
-- Streaming response 和 asynchronous execution。
-- Profile Patch overlay 和 configuration hot reload。
-- Transactional rollback。
-- Persistent Bash、PTY support 和 background job。
-- Operating-system sandbox。
-- Automatic API retry 和 Model Step limit。
-- Skill、Memory 和 Workspace instruction loading。
-
-这些省略是设计的一部分。它们让完整执行链可读，同时不声称覆盖 production harness。
-
-## 8. 通过 branch 和 worktree 协作
-
-在独立 worktree 中只做一个被分配的变更。用 Conventional Commit 提交这个变更。独立的只读 reviewer 检查 branch。在同一个 branch 上修复可操作的问题。运行 branch test。之后用 `--no-ff` 合并到 `main`，并再次运行 main test。不要 squash branch。
-
-这个流程保留可审查的实现历史，同时避免多个 worker 修改同一个 worktree。
-
-## 9. 继续阅读规范文档
-
-[CONTEXT.md](CONTEXT.md) 是规范术语与 runtime glossary。当本指南中的术语仍不清楚时，请阅读它。
-
-[PLAN.md](PLAN.md) 说明产品边界、runtime contract、verification target 和协作 gate。
-
-[docs/adr/](docs/adr/) 记录难以逆转的选择：semantic fidelity、动态 Plugin lifecycle、trusted Bash、Session/Provider separation、延后 Agent creation、代码行数上限、synchronous execution、Python 3.12 无运行时依赖，以及 failed `ToolOutput` semantics。
+```bibtex
+@misc{mu2026nanodsh,
+  author       = {Guohong Mu},
+  title        = {nano-dsh: A Minimal Python Reconstruction of DeepSeek Harness},
+  year         = {2026},
+  howpublished = {\url{https://github.com/mgh233/nano-dsh}},
+}
+```
