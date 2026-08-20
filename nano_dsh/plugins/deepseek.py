@@ -20,6 +20,8 @@ def _send(request: urllib.request.Request) -> bytes:
 
 
 class DeepSeekProvider:
+    system_prompt = SYSTEM_PROMPT
+
     def __init__(
         self,
         api_key: str,
@@ -50,7 +52,7 @@ class DeepSeekProvider:
     ) -> c.AssistantOutput:
         payload = {
             "model": self._model,
-            "messages": _messages(events),
+            "messages": _messages(self.system_prompt, events),
             "tools": [_tool_definition(tool) for tool in tools],
             "tool_choice": "auto",
             "thinking": {"type": self._thinking},
@@ -60,20 +62,35 @@ class DeepSeekProvider:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {"Authorization": f"Bearer {self._api_key}",
                    "Content-Type": "application/json"}
-        self._emit("request")
+        self._emit("model", "request")
         request = urllib.request.Request(_ENDPOINT, body, headers, method="POST")
         raw = self._transport(request)
-        self._emit("response")
+        self._emit("model", "response")
         payload = json.loads(raw.decode("utf-8"))
-        return _assistant_output(payload)
+        output = _assistant_output(payload)
+        if output.reasoning_content:
+            self._emit("reasoning", output.reasoning_content)
+        if output.content:
+            self._emit("assistant", output.content)
+        for call in output.tool_calls:
+            self._emit(
+                "tool_call",
+                f"id: {call.id}\n"
+                f"name: {call.name}\n"
+                f"arguments:\n{call.arguments}",
+            )
+        return output
 
-    def _emit(self, phase: str) -> None:
+    def _emit(self, category: str, message: str) -> None:
         if self._trace is not None:
-            self._trace("model", phase)
+            self._trace(category, message)
 
 
-def _messages(events: Sequence[c.SessionEvent]) -> list[dict[str, Any]]:
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+def _messages(
+    system_prompt: str,
+    events: Sequence[c.SessionEvent],
+) -> list[dict[str, Any]]:
+    messages = [{"role": "system", "content": system_prompt}]
     for event in events:
         if isinstance(event, c.UserEvent):
             messages.append({"role": "user", "content": event.content})

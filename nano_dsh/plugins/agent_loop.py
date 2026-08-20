@@ -71,6 +71,12 @@ class _Agent:
                             content=result,
                         )
                     )
+                    self._trace(
+                        "tool_result",
+                        f"id: {call.id}\n"
+                        f"name: {call.name}\n"
+                        f"content:\n{result}",
+                    )
                 continue
             assert output.content is not None and output.content.strip(), (
                 "final assistant response must contain non-empty content"
