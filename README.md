@@ -1,6 +1,6 @@
-# Nano-dsh Reader Guide
+# Nano-DSH
 
-nano-dsh is a small, synchronous teaching harness that shows how a CLI task becomes an Agent Run through dynamic Plugins, real Tools, and a DeepSeek Model Step.
+Nano-DSH is a small, synchronous teaching harness that shows how a CLI task becomes an Agent Run through dynamic Plugins, real Tools, and a DeepSeek Model Step.
 
 ## 1. One complete Agent Run
 
@@ -50,7 +50,7 @@ The Execution Trace starts with the System Prompt. It then prints the User Task,
 
 ## 2. Minimal vocabulary
 
-| Term | Meaning in nano-dsh |
+| Term | Meaning in Nano-DSH |
 | --- | --- |
 | Profile | A TOML file that selects an ordered list of Bundles. The headless Profile is [profiles/headless.toml](profiles/headless.toml). |
 | Bundle | An ordered TOML group of Plugin Specifications. It determines Fiber creation order, not activation order. |
@@ -172,7 +172,7 @@ If you find this repository useful, please cite it as:
 ```bibtex
 @misc{mu2026nanodsh,
   author       = {Guohong Mu},
-  title        = {nano-dsh: A Minimal Python Reconstruction of DeepSeek Harness},
+  title        = {Nano-DSH: A Minimal Python Reconstruction of DeepSeek Harness},
   year         = {2026},
   howpublished = {\url{https://github.com/mgh233/nano-dsh}},
 }

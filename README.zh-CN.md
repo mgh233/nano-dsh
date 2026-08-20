@@ -1,6 +1,6 @@
-# Nano-dsh 读者指南
+# Nano-DSH
 
-nano-dsh 是一个小型、同步的教学 harness。它展示了一个 CLI 任务如何经过动态 Plugin、真实 Tool 和 DeepSeek Model Step，成为一次 Agent Run。
+Nano-DSH 是一个小型、同步的教学 harness。它展示了一个 CLI 任务如何经过动态 Plugin、真实 Tool 和 DeepSeek Model Step，成为一次 Agent Run。
 
 ## 1. 一次完整的 Agent Run
 
@@ -50,7 +50,7 @@ Execution Trace 从 System Prompt 开始。然后打印 User Task、Reasoning Co
 
 ## 2. 最少术语
 
-| 术语 | 在 nano-dsh 中的含义 |
+| 术语 | 在 Nano-DSH 中的含义 |
 | --- | --- |
 | Profile | 选择有序 Bundle 列表的 TOML 文件。headless Profile 是 [profiles/headless.toml](profiles/headless.toml)。 |
 | Bundle | 一个有序的 Plugin Specification TOML 组。它决定 Fiber 创建顺序，而不决定激活顺序。 |
@@ -172,7 +172,7 @@ python examples/example.py --api-key-file .key | tee example-output.log
 ```bibtex
 @misc{mu2026nanodsh,
   author       = {Guohong Mu},
-  title        = {nano-dsh: A Minimal Python Reconstruction of DeepSeek Harness},
+  title        = {Nano-DSH: A Minimal Python Reconstruction of DeepSeek Harness},
   year         = {2026},
   howpublished = {\url{https://github.com/mgh233/nano-dsh}},
 }
