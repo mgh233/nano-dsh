@@ -156,7 +156,7 @@ The included Live Acceptance Suite uses three disposable Bug Fixtures: one logic
 Run it with:
 
 ```bash
-python examples/scripts/live_acceptance.py --api-key-file .key
+python examples/example.py --api-key-file .key
 ```
 
 A successful run prints:

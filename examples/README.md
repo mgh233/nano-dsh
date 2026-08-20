@@ -2,10 +2,10 @@
 
 This directory contains small projects for a real live acceptance run.
 
-## Fixtures
+## Workspaces
 
-`fixtures/` contains three tiny Python projects with deliberate bugs. The
-original fixture files are test inputs. Do not fix them in place.
+`workspaces/` contains three tiny Python workspaces with deliberate bugs. The
+source files are acceptance inputs. Do not fix them in place.
 
 - `boundary-bug/` has a boundary bug. The goal is to keep the final complete or
   short batch.
@@ -16,14 +16,14 @@ original fixture files are test inputs. Do not fix them in place.
 
 ## Live acceptance script
 
-`scripts/live_acceptance.py` copies each fixture to a temporary Workspace. It
+`example.py` copies each fixture to a temporary Workspace. It
 calls real DeepSeek to complete the tool loop. It then runs `unittest`
 independently to verify the result.
 
 Run it from the repository root:
 
 ```bash
-python examples/scripts/live_acceptance.py --api-key-file .key
+python examples/example.py --api-key-file .key
 ```
 
 `.key` contains one API key on one line. Git ignores this file.

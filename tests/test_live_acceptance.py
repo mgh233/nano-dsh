@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "examples/scripts"))
-import live_acceptance
+sys.path.insert(0, str(ROOT / "examples"))
+import example
 
 
 GOOD_TRACE = """\
@@ -73,7 +73,7 @@ EXPECTED_FIXTURE_RESULTS = {
 
 class OriginalFixtureTests(unittest.TestCase):
     def test_each_original_fixture_has_its_expected_failure(self) -> None:
-        for fixture in live_acceptance.FIXTURES:
+        for fixture in example.FIXTURES:
             with self.subTest(fixture=fixture.name):
                 completed = subprocess.run(
                     [
@@ -153,8 +153,8 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
             print("done")
             print("model: step 1 started", file=sys.stderr)
 
-        with patch.object(live_acceptance, "nano_dsh_main", fake_main):
-            stdout, stderr = live_acceptance._invoke_cli(["task"])
+        with patch.object(example, "nano_dsh_main", fake_main):
+            stdout, stderr = example._invoke_cli(["task"])
 
         self.assertEqual(stdout, "done\n")
         self.assertEqual(stderr, "model: step 1 started\n")
@@ -165,11 +165,11 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
             print("reasoning: do-not-print-this-key", file=sys.stderr)
             raise RuntimeError("do-not-print-this-key")
 
-        with patch.object(live_acceptance, "nano_dsh_main", fake_main):
+        with patch.object(example, "nano_dsh_main", fake_main):
             with self.assertRaises(
-                live_acceptance.CliInvocationFailure
+                example.CliInvocationFailure
             ) as caught:
-                live_acceptance._invoke_cli(["task"])
+                example._invoke_cli(["task"])
 
         self.assertEqual(caught.exception.trace, ("tool: execute bash",))
         self.assertNotIn("do-not-print-this-key", str(caught.exception))
@@ -182,7 +182,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
             self.repair(arguments)
             return "Fixed.\n", GOOD_TRACE
 
-        result = live_acceptance._run_fixture(
+        result = example._run_fixture(
             self.fixture,
             self.key_file,
             invoke_cli=invoke,
@@ -209,7 +209,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
             calls += 1
             raise RuntimeError("secret key and private reasoning")
 
-        result = live_acceptance._run_fixture(
+        result = example._run_fixture(
             self.fixture,
             self.key_file,
             invoke_cli=invoke,
@@ -283,7 +283,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
         }
         for name, response in cases.items():
             with self.subTest(name=name):
-                result = live_acceptance._run_fixture(
+                result = example._run_fixture(
                     self.fixture,
                     self.key_file,
                     invoke_cli=lambda _: response,
@@ -303,7 +303,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
             "model: step 3 completed\n"
             "agent: run completed\n",
         )
-        result = live_acceptance._run_fixture(
+        result = example._run_fixture(
             self.fixture,
             self.key_file,
             invoke_cli=lambda _: ("done\n", trace),
@@ -326,7 +326,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
         for event in lifecycle_events:
             with self.subTest(event=event):
                 trace = GOOD_TRACE.replace(event, f"{event}\n{event}")
-                result = live_acceptance._run_fixture(
+                result = example._run_fixture(
                     self.fixture,
                     self.key_file,
                     invoke_cli=lambda _: ("done\n", trace),
@@ -336,7 +336,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
                 self.assertTrue(result.workspace.exists())
 
     def test_independent_unittest_gate_rejects_an_unfixed_workspace(self) -> None:
-        result = live_acceptance._run_fixture(
+        result = example._run_fixture(
             self.fixture,
             self.key_file,
             invoke_cli=lambda _: ("done\n", GOOD_TRACE),
@@ -357,7 +357,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
             + "http: https://api.deepseek.com/full-response\n"
             + "file: complete source text\n"
         )
-        result = live_acceptance._run_fixture(
+        result = example._run_fixture(
             self.fixture,
             self.key_file,
             invoke_cli=lambda _: ("done\n", unsafe_trace),
@@ -365,7 +365,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
         )
         output = StringIO()
         with redirect_stdout(output):
-            live_acceptance._print_result(result)
+            example._print_result(result)
 
         text = output.getvalue()
         self.assertNotIn(secret, text)
@@ -384,7 +384,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
 
         output = StringIO()
         with redirect_stdout(output):
-            exit_code = live_acceptance.run_suite(
+            exit_code = example.run_suite(
                 self.key_file,
                 fixtures=(self.fixture, self.fixture, self.fixture),
                 invoke_cli=invoke,
@@ -397,7 +397,7 @@ class LiveAcceptanceHarnessTests(unittest.TestCase):
 
     def test_argument_path_is_absolute_without_reading_key(self) -> None:
         with patch.object(Path, "read_text", side_effect=AssertionError):
-            parsed = live_acceptance._parse_args(
+            parsed = example._parse_args(
                 ["--api-key-file", str(self.key_file)]
             )
 
