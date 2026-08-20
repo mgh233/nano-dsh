@@ -156,7 +156,7 @@ python -m unittest discover -s tests
 运行命令：
 
 ```bash
-python scripts/live_acceptance.py --api-key-file .key
+python examples/scripts/live_acceptance.py --api-key-file .key
 ```
 
 成功执行时会输出：

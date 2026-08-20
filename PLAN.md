@@ -174,12 +174,14 @@ nano-dsh/
 │       ├── headless_startup.py
 │       └── headless_runner.py
 ├── tests/
-├── fixtures/
-│   ├── logic-bug/
-│   ├── boundary-bug/
-│   └── missing-implementation/
-└── scripts/
-    └── live_acceptance.py
+└── examples/
+    ├── README.md
+    ├── fixtures/
+    │   ├── logic-bug/
+    │   ├── boundary-bug/
+    │   └── missing-implementation/
+    └── scripts/
+        └── live_acceptance.py
 ```
 
 ## Git Workflow
@@ -263,8 +265,8 @@ No branch is squashed.
 
 ### `test/live-acceptance`
 
-- `fixtures/`.
-- `scripts/live_acceptance.py`.
+- `examples/fixtures/`.
+- `examples/scripts/live_acceptance.py`.
 - Live acceptance assertions.
 
 ## Verification
@@ -295,7 +297,7 @@ The offline suite covers:
 ### Live
 
 ```bash
-python scripts/live_acceptance.py --api-key-file .key
+python examples/scripts/live_acceptance.py --api-key-file .key
 ```
 
 The Live Acceptance Suite runs three independent Bug Fixtures:
@@ -333,7 +335,7 @@ Verification evidence recorded on `main` on 2026-08-20:
 - The offline suite passed 94/94 tests.
 - Production Python contained 995 non-empty, non-comment lines. The largest
   production file contained 179 such lines.
-- One execution of `python scripts/live_acceptance.py --api-key-file .key`
+- One execution of `python examples/scripts/live_acceptance.py --api-key-file .key`
   completed without automatic retries. The logic, boundary, and
   missing-implementation fixtures all printed `PASS`; the summary was
   `3/3 PASS`.
