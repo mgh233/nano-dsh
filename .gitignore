@@ -2,3 +2,10 @@
 .venv/
 __pycache__/
 *.py[cod]
+*.log
+
+# Local development material
+/CONTEXT.md
+/PLAN.md
+/docs/
+/tests/
